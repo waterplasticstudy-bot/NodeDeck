@@ -1,7 +1,7 @@
 //! 本机配置读写、多节点 NAT 档案、多账号与订阅台账（零个人预设，全手动引入）
 
 use crate::constants::{
-    CONFIG_FILE_NAME, DEFAULT_CLASH_API_PORT, DEFAULT_HOST, DEFAULT_KEY_PATH,
+    CONFIG_FILE_NAME, DEFAULT_CLASH_API_PORT, DEFAULT_DIALER_PROXY, DEFAULT_HOST, DEFAULT_KEY_PATH,
     DEFAULT_MIHOMO_API_URL, DEFAULT_MONTHLY_QUOTA_GB, DEFAULT_NAT_SINGBOX_CONFIG,
     DEFAULT_SERVER_NAME, DEFAULT_SNI, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DEFAULT_VLESS_FLOW,
     DEFAULT_VLESS_FP, WIN_OPENSSH_BIN, WIN_OPENSSH_KEYGEN_BIN,
@@ -143,6 +143,7 @@ pub struct AppConfig {
     pub mihomo_api_url: String,
     #[serde(alias = "bettboxSecret")]
     pub mihomo_secret: String,
+    pub dialer_proxy: String,
     pub close_to_tray: bool,
     #[serde(default)]
     pub nat_nodes: Vec<NatNodeConfig>,
@@ -163,6 +164,7 @@ impl Default for AppConfig {
             clash_api_port: DEFAULT_CLASH_API_PORT,
             mihomo_api_url: DEFAULT_MIHOMO_API_URL.to_string(),
             mihomo_secret: String::new(),
+            dialer_proxy: DEFAULT_DIALER_PROXY.to_string(),
             close_to_tray: true,
             nat_nodes: Vec::new(),
             provider_accounts: Vec::new(),

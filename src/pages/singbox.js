@@ -5,6 +5,7 @@
 import { closeModal, confirmDialog, openModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import {
+  DEFAULT_DIALER_PROXY,
   DEFAULT_NAT_PORTAL_URL,
   DEFAULT_NAT_SINGBOX_CONFIG,
   DEFAULT_SNI,
@@ -357,9 +358,10 @@ export function initSingboxEvents(appState, { switchTab, reloadOverview, openNat
       const host = currentSbData.host || '';
       const pbk = currentSbData.publicKey || '';
       const nodeName = currentSbData.scopeMeta?.name || '';
+      const dialer = appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY;
       const text = act === 'copy-link'
         ? buildStandardNodeLink(inb, host, pbk, nodeName)
-        : buildMihomoYaml(inb, host, pbk, nodeName);
+        : buildMihomoYaml(inb, host, pbk, nodeName, null, dialer);
       const protoTag = String(inb.type || '').toUpperCase();
       try {
         await copyToClipboard(text);

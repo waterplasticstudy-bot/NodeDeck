@@ -29,6 +29,7 @@ function createInitialDemoState() {
       clashApiPort: 19090,
       mihomoApiUrl: 'http://127.0.0.1:9090',
       mihomoSecret: '',
+      dialerProxy: 'Proxy',
       closeToTray: true,
       natNodes: [
         {

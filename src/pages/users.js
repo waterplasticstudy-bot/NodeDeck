@@ -5,6 +5,7 @@
 import { closeModal, confirmDialog, openModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import {
+  DEFAULT_DIALER_PROXY,
   DEFAULT_NAT_PORTAL_URL,
   MAIN_VPS_NODE_ID,
   MEMBER_COLORS,
@@ -267,11 +268,12 @@ async function loadCurrentVpsUsers(appState) {
     const vpsHost = appState.localConfig?.host || '';
     const vpsPbk = appState.localConfig?.realityPublicKey || '';
     const vpsName = appState.localConfig?.name || 'Primary VPS';
+    const dialer = appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY;
 
     $('activeUsersGrid').innerHTML = res.activeUsers.map((u, idx) => {
       const lm = liveMap[u.name] || { activeConnections: 0, upload: 0, download: 0, sourceIPs: [] };
       const online = lm.activeConnections > 0;
-      const yaml = buildMihomoYaml(pseudoInb, vpsHost, vpsPbk, vpsName, u);
+      const yaml = buildMihomoYaml(pseudoInb, vpsHost, vpsPbk, vpsName, u, dialer);
       return `
         <div class="user-card">
           <div class="flex-between">
@@ -448,9 +450,10 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     }
     if ((action === 'mx-copy-link' || action === 'mx-copy-yaml') && node && inb) {
       const protoTag = String(inb.type || '').toUpperCase();
+      const dialer = appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY;
       const text = action === 'mx-copy-link'
         ? buildStandardNodeLink(inb, node.host || '', node.publicKey || '', node.name, user)
-        : buildMihomoYaml(inb, node.host || '', node.publicKey || '', node.name, user);
+        : buildMihomoYaml(inb, node.host || '', node.publicKey || '', node.name, user, dialer);
       try {
         await copyToClipboard(text);
         showToast(action === 'mx-copy-link'
@@ -541,9 +544,10 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
       const inb = (snap.inbounds || []).find((i) => i.tag === btn.dataset.tag);
       const u = (inb?.usersDetail || []).find((x) => (x.username || x.name || inb.tag) === btn.dataset.user);
       if (!inb) return;
+      const dialer = appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY;
       const text = act === 'nat-u-link'
         ? buildStandardNodeLink(inb, snap.host || '', snap.publicKey || '', snap.name || node.name, u)
-        : buildMihomoYaml(inb, snap.host || '', snap.publicKey || '', snap.name || node.name, u);
+        : buildMihomoYaml(inb, snap.host || '', snap.publicKey || '', snap.name || node.name, u, dialer);
       try {
         await copyToClipboard(text);
         showToast(act === 'nat-u-link' ? '已复制标准节点链接' : '已复制 Mihomo / Clash 链式 YAML');

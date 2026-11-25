@@ -18,6 +18,7 @@ pub const DEFAULT_KEY_PATH: &str = "%USERPROFILE%\\.ssh\\id_ed25519";
 pub const DEFAULT_MONTHLY_QUOTA_GB: u64 = 2000;
 pub const DEFAULT_CLASH_API_PORT: u16 = 19090;
 pub const DEFAULT_MIHOMO_API_URL: &str = "http://127.0.0.1:9090";
+pub const DEFAULT_DIALER_PROXY: &str = "Proxy";
 
 /// VLESS + Reality 链接拼接默认参数
 pub const DEFAULT_SNI: &str = "www.microsoft.com";
@@ -99,10 +100,12 @@ pub const MIHOMO_GROUP_TYPES: &[&str] = &["Selector", "URLTest", "Fallback", "Lo
 pub const MIHOMO_PRIORITY_GROUPS: &[&str] = &[
     "PROXY",
     "Proxy",
+    "前置代理",
     "节点选择",
     "自动选择",
     "Auto",
     "Fallback",
+    "漏网之鱼",
     "GLOBAL",
 ];
 

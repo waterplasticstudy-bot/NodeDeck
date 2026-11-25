@@ -70,6 +70,7 @@ pub struct PartialConfigInput {
     pub clash_api_port: Option<u16>,
     pub mihomo_api_url: Option<String>,
     pub mihomo_secret: Option<String>,
+    pub dialer_proxy: Option<String>,
     pub close_to_tray: Option<bool>,
 }
 
@@ -142,6 +143,11 @@ pub async fn save_config_cmd(
             .mihomo_secret
             .map(|s| s.trim().to_string())
             .unwrap_or(current.mihomo_secret),
+        dialer_proxy: input
+            .dialer_proxy
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string())
+            .unwrap_or(current.dialer_proxy),
         close_to_tray: input.close_to_tray.unwrap_or(current.close_to_tray),
         nat_nodes: current.nat_nodes,
         provider_accounts: current.provider_accounts,

@@ -3,7 +3,7 @@
  */
 
 import { showToast } from '../components/toast.js';
-import { DEFAULT_MIHOMO_URL, DEFAULT_MONTHLY_QUOTA_GB } from '../constants/ui-constants.js';
+import { DEFAULT_DIALER_PROXY, DEFAULT_MIHOMO_URL, DEFAULT_MONTHLY_QUOTA_GB } from '../constants/ui-constants.js';
 import { invokeCmd, withButtonLoading } from '../utils/bridge.js';
 import { esc } from '../utils/format.js';
 
@@ -24,6 +24,7 @@ export async function loadConfigUI(appState) {
   $('cfgClashPort').value = config.clashApiPort || 19090;
   $('cfgMhUrl').value = config.mihomoApiUrl || DEFAULT_MIHOMO_URL;
   $('cfgMhSecret').value = config.mihomoSecret || '';
+  $('cfgDialerProxy').value = config.dialerProxy || DEFAULT_DIALER_PROXY;
   $('cfgCloseToTraySwitch').classList.toggle('on', config.closeToTray !== false);
 
   $('keyStatusText').innerHTML = keyExists
@@ -52,6 +53,7 @@ export function initSettingsEvents(appState, { reloadOverview, reloadMihomo, swi
           clashApiPort: Number($('cfgClashPort').value) || 19090,
           mihomoApiUrl: $('cfgMhUrl').value,
           mihomoSecret: $('cfgMhSecret').value,
+          dialerProxy: $('cfgDialerProxy').value,
           closeToTray: $('cfgCloseToTraySwitch').classList.contains('on'),
         },
       });
