@@ -1,0 +1,126 @@
+/* ==========================================================================
+   Design Tokens — 铁律 #1：全站唯一视觉设计基准（Apple HIG 浅色 / 深色双主题）
+   ========================================================================== */
+
+:root {
+  /* Palette: Light */
+  --bg: #f5f5f7;
+  --bg-elev: #ffffff;
+  --bg-sub: #f2f2f7;
+  --sidebar-bg: rgba(255, 255, 255, 0.8);
+  --glass: rgba(255, 255, 255, 0.78);
+  --backdrop-dim: rgba(0, 0, 0, 0.36);
+
+  --border: rgba(0, 0, 0, 0.07);
+  --border-strong: rgba(0, 0, 0, 0.13);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.07), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.24);
+  --shadow-toast: 0 12px 30px rgba(0, 0, 0, 0.22);
+
+  --text: #1d1d1f;
+  --text-2: #48484a;
+  --muted: #86868b;
+  --on-accent: #ffffff;
+
+  --blue: #007aff;
+  --green: #34c759;
+  --orange: #ff9500;
+  --purple: #af52de;
+  --red: #ff3b30;
+  --teal: #30b0c7;
+
+  --blue-bg: rgba(0, 122, 255, 0.11);
+  --blue-bg-strong: rgba(0, 122, 255, 0.18);
+  --green-bg: rgba(52, 199, 89, 0.13);
+  --orange-bg: rgba(255, 149, 0, 0.13);
+  --orange-border: rgba(255, 149, 0, 0.28);
+  --red-bg: rgba(255, 59, 48, 0.12);
+  --red-border: rgba(255, 59, 48, 0.3);
+  --purple-bg: rgba(175, 82, 222, 0.12);
+
+  --ring-track: rgba(0, 0, 0, 0.07);
+  --grid-line: rgba(0, 0, 0, 0.06);
+  --term-bg: #1c1c1e;
+  --term-text: #e5e5ea;
+
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-hero: 30px;
+
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Radii */
+  --radius-xs: 7px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* Layering & Motion */
+  --z-tip: 10;
+  --z-sidebar: 20;
+  --z-modal: 900;
+  --z-toast: 999;
+  --ease-fast: 0.15s ease;
+  --ease-base: 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: 0.2s cubic-bezier(0.3, 1.2, 0.4, 1);
+
+  /* Layout Dimensions */
+  --sidebar-width: 244px;
+  --main-max-width: 1380px;
+}
+
+[data-theme="dark"] {
+  --bg: #000000;
+  --bg-elev: #1c1c1e;
+  --bg-sub: #2c2c2e;
+  --sidebar-bg: rgba(28, 28, 30, 0.84);
+  --glass: rgba(28, 28, 30, 0.8);
+  --backdrop-dim: rgba(0, 0, 0, 0.56);
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.6);
+
+  --text: #f5f5f7;
+  --text-2: #d1d1d6;
+  --muted: #8e8e93;
+
+  --blue: #0a84ff;
+  --green: #30d158;
+  --orange: #ff9f0a;
+  --purple: #bf5af2;
+  --red: #ff453a;
+  --teal: #40c8e0;
+
+  --blue-bg: rgba(10, 132, 255, 0.18);
+  --blue-bg-strong: rgba(10, 132, 255, 0.26);
+  --green-bg: rgba(48, 209, 88, 0.18);
+  --orange-bg: rgba(255, 159, 10, 0.18);
+  --red-bg: rgba(255, 69, 58, 0.18);
+  --purple-bg: rgba(191, 90, 242, 0.18);
+
+  --ring-track: rgba(255, 255, 255, 0.1);
+  --grid-line: rgba(255, 255, 255, 0.08);
+  --term-bg: #111113;
+  --term-text: #e5e5ea;
+}

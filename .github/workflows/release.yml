@@ -1,0 +1,58 @@
+name: Build & Release NodeDeck
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Privacy & Sanitization Guard
+        run: node scripts/privacy-check.mjs
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Run Clippy (-D warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Build Release Binary (Single .exe)
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release
+
+      - name: Package Portable Artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src-tauri/target/release/NodeDeck.exe dist/NodeDeck-windows-x64.exe
+          Copy-Item config.example.json dist/config.example.json
+          Compress-Archive -Path dist/* -DestinationPath NodeDeck-windows-x64-portable.zip -Force
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/NodeDeck-windows-x64.exe
+            NodeDeck-windows-x64-portable.zip

@@ -1,0 +1,58 @@
+{
+  "name": "My Primary VPS",
+  "host": "198.51.100.10",
+  "sshPort": 22,
+  "user": "root",
+  "keyPath": "%USERPROFILE%\\.ssh\\id_ed25519",
+  "realityPublicKey": "",
+  "monthlyQuotaGB": 2000,
+  "clashApiPort": 19090,
+  "mihomoApiUrl": "http://127.0.0.1:9090",
+  "mihomoSecret": "",
+  "closeToTray": true,
+  "natNodes": [
+    {
+      "id": "nat_example_1",
+      "name": "Demo JP NAT",
+      "region": "JP",
+      "plan": "Residential LXC NAT",
+      "providerProfileId": "provider_1",
+      "portalUrl": "https://panel.example.com/instances/1",
+      "publicIp": "203.0.113.21",
+      "servicePort": 25000,
+      "monthlyQuotaGB": 100,
+      "billingCycle": "monthly",
+      "priceCny": 6.0,
+      "expiresAt": "2027-01-01",
+      "autoRenew": true,
+      "shareLink": "",
+      "sshPort": 25022,
+      "sshUser": "root",
+      "sshKeyPath": "",
+      "singboxConfigPath": "/usr/local/etc/sing-box/config.json",
+      "realityPublicKey": "",
+      "trafficSnapshot": null,
+      "notes": "Example Alpine 3.21 NAT instance (replace with your own IP and port)"
+    }
+  ],
+  "providerAccounts": [
+    {
+      "id": "acc_example_1",
+      "profileId": "provider_1",
+      "name": "CloudNet Pro",
+      "category": "airport",
+      "accentColor": "blue",
+      "accountLabel": "Main Account",
+      "portalUrl": "https://portal.example.com/#/dashboard",
+      "renewUrl": "https://portal.example.com/#/shop",
+      "subscriptionUrl": "",
+      "planName": "Standard Monthly",
+      "billingCycle": "monthly",
+      "priceCny": 20.0,
+      "expiresAt": "2027-01-01",
+      "autoRenew": false,
+      "trafficSnapshot": null,
+      "notes": "Isolated WebView2 cookie sandbox; never stores passwords"
+    }
+  ]
+}

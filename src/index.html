@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NodeDeck</title>
+  <link rel="stylesheet" href="./styles/tokens.css" />
+  <link rel="stylesheet" href="./styles/layout.css" />
+  <link rel="stylesheet" href="./styles/components.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-row">
+        <img class="app-icon-img" src="./assets/app-icon.png" alt="NodeDeck" />
+        <div>
+          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.0</span></h1>
+          <small id="sideHost" class="mono">等待连接...</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="node-switcher-wrap">
+      <div class="node-switcher-label">当前托管节点</div>
+      <select class="node-switcher" id="nodeSwitcher" title="一键切换主 VPS 与全部家宽 NAT 实例"></select>
+    </div>
+
+    <div class="nav-group-label">节点控制面板</div>
+    <button class="nav-btn active" data-tab="overview">
+      <span class="left"><span>📊</span><span>节点总览</span></span>
+      <span class="nav-badge num" id="navLatBadge">--</span>
+    </button>
+    <button class="nav-btn" data-tab="mihomo">
+      <span class="left"><span>💻</span><span>本机 Mihomo</span></span>
+      <span class="nav-badge num" id="navMhBadge">--</span>
+    </button>
+    <button class="nav-btn" data-tab="audit">
+      <span class="left"><span>🕵️</span><span>成员流量与在线监控</span></span>
+      <span class="nav-badge num" id="navConnBadge">0</span>
+    </button>
+    <button class="nav-btn" data-tab="singbox">
+      <span class="left"><span>🧩</span><span>sing-box 节点与协议</span></span>
+      <span class="nav-badge num" id="navInbBadge">--</span>
+    </button>
+    <button class="nav-btn" data-tab="users">
+      <span class="left"><span>👥</span><span>用户与节点归属</span></span>
+      <span class="nav-badge num" id="navUserBadge">--</span>
+    </button>
+    <button class="nav-btn" data-tab="logs">
+      <span class="left"><span>📜</span><span>日志与运维</span></span>
+    </button>
+
+    <div class="nav-group-label">续费与多账号</div>
+    <button class="nav-btn" data-tab="assets">
+      <span class="left"><span>💳</span><span>续费与多账号</span></span>
+      <span class="nav-badge num" id="navAssetsBadge">--</span>
+    </button>
+
+    <div class="nav-group-label">系统</div>
+    <button class="nav-btn" data-tab="settings">
+      <span class="left"><span>⚙️</span><span>本机与节点配置</span></span>
+    </button>
+
+    <div class="side-bottom">
+      <button class="demo-toggle-btn" id="demoToggleBtn" type="button" title="无需服务器即可一键体验完整界面与交互">
+        <span>🎭 演示模式</span>
+        <span class="pill gray xs" id="demoToggleBadge">关闭</span>
+      </button>
+      <div class="seg" id="themeSeg" title="切换外观主题">
+        <button data-theme-val="light" class="active">☀️ 浅色</button>
+        <button data-theme-val="dark">🌙 深色</button>
+      </div>
+      <div class="privacy-pill">
+        <strong>🔒 零遥测原生沙箱</strong><br />
+        多账号独立隔离不串号，零公网端口暴露，所有数据仅存于本地。
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="hero-header">
+      <div>
+        <h2 class="page-title" id="pageHeading">节点总览</h2>
+        <div class="status-strip">
+          <span class="chip"><span class="dot" id="connDot"></span><span id="connText">正在连接...</span></span>
+          <span class="chip"><span class="dot" id="sbDot"></span><span id="sbText">sing-box --</span></span>
+          <span class="chip num" id="latChip">往返延迟 --</span>
+          <span class="chip num" id="upChip">已稳定运行 --</span>
+          <span class="chip num" id="syncChip">更新于 --</span>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="seg" id="pollSeg">
+          <button data-ms="5000">5秒</button>
+          <button data-ms="10000" class="active">10秒</button>
+          <button data-ms="30000">30秒</button>
+          <button data-ms="0">手动</button>
+        </div>
+        <button class="btn primary" id="refreshBtn">↻ 刷新</button>
+      </div>
+    </header>
+
+    <div class="banner" id="setupBanner"></div>
+
+    <!-- ==================== TAB: OVERVIEW (VPS + NAT DUAL MODE) ==================== -->
+    <section class="tab active" id="tab-overview">
+      <!-- Mode A: Main VPS Overview -->
+      <div id="vpsOverviewPane">
+        <div class="grid-4">
+          <div class="card interactive">
+            <div class="card-head">
+              <span class="card-label">处理器 · CPU</span>
+              <span class="pill green" id="cpuHealth">检测中</span>
+            </div>
+            <div class="ring-card-body">
+              <div class="ring-info">
+                <div class="hero-num num"><span id="cpuVal">--</span><span class="hero-unit">%</span></div>
+                <div class="sub-note num" id="cpuSub">-- 核 · 平均负载 --</div>
+              </div>
+              <svg class="ring-svg" viewBox="0 0 72 72">
+                <circle class="ring-track" cx="36" cy="36" r="29" />
+                <circle class="ring-prog" id="cpuRing" cx="36" cy="36" r="29" stroke="var(--blue)" stroke-dasharray="182.2" stroke-dashoffset="182.2" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="card interactive">
+            <div class="card-head">
+              <span class="card-label">运行内存 · RAM</span>
+              <span class="pill blue" id="memHealth">检测中</span>
+            </div>
+            <div class="ring-card-body">
+              <div class="ring-info">
+                <div class="hero-num num"><span id="memVal">--</span><span class="hero-unit">%</span></div>
+                <div class="sub-note num" id="memSub">-- / -- · sing-box 占 --</div>
+              </div>
+              <svg class="ring-svg" viewBox="0 0 72 72">
+                <circle class="ring-track" cx="36" cy="36" r="29" />
+                <circle class="ring-prog" id="memRing" cx="36" cy="36" r="29" stroke="var(--purple)" stroke-dasharray="182.2" stroke-dashoffset="182.2" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="card interactive">
+            <div class="card-head">
+              <span class="card-label">系统存储 · NVMe</span>
+              <span class="pill green" id="diskHealth">检测中</span>
+            </div>
+            <div class="ring-card-body">
+              <div class="ring-info">
+                <div class="hero-num num"><span id="diskVal">--</span><span class="hero-unit">%</span></div>
+                <div class="sub-note num" id="diskSub">已用 -- · 剩余 --</div>
+              </div>
+              <svg class="ring-svg" viewBox="0 0 72 72">
+                <circle class="ring-track" cx="36" cy="36" r="29" />
+                <circle class="ring-prog" id="diskRing" cx="36" cy="36" r="29" stroke="var(--teal)" stroke-dasharray="182.2" stroke-dashoffset="182.2" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="card interactive">
+            <div class="card-head">
+              <span class="card-label" id="trafficCardLabel">开机双向流量 · 配额</span>
+              <span class="pill green" id="trafficHealth">检测中</span>
+            </div>
+            <div class="ring-card-body">
+              <div class="ring-info">
+                <div class="hero-num num"><span id="trafficVal">--</span><span class="hero-unit">GB</span></div>
+                <div class="sub-note num" id="trafficSub">单向约 -- GB · 日均 -- GB</div>
+              </div>
+              <svg class="ring-svg" viewBox="0 0 72 72">
+                <circle class="ring-track" cx="36" cy="36" r="29" />
+                <circle class="ring-prog" id="trafficRing" cx="36" cy="36" r="29" stroke="var(--green)" stroke-dasharray="182.2" stroke-dashoffset="182.2" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">CPU 与内存趋势</h3>
+                <div class="sub-note">自动采样，悬停曲线可查看精确时刻数值</div>
+              </div>
+              <div class="chart-legend num">
+                <span class="legend-item"><span class="legend-dot cpu"></span>CPU <strong id="legCpu">--%</strong></span>
+                <span class="legend-item"><span class="legend-dot mem"></span>内存 <strong id="legMem">--%</strong></span>
+              </div>
+            </div>
+            <div class="chart-wrap" id="cpuChartWrap">
+              <svg class="chart-svg" id="cpuMemChart"></svg>
+              <div class="chart-tip num" id="cpuTip"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">实时网络吞吐 (Mbps)</h3>
+                <div class="sub-note num" id="netPeakNote">端口上限 -- Mbps · 本次观测峰值 --</div>
+              </div>
+              <div class="chart-legend num">
+                <span class="legend-item"><span class="legend-dot rx"></span>下行 RX <strong id="legRx">--</strong></span>
+                <span class="legend-item"><span class="legend-dot tx"></span>上行 TX <strong id="legTx">--</strong></span>
+              </div>
+            </div>
+            <div class="chart-wrap" id="netChartWrap">
+              <svg class="chart-svg" id="netChart"></svg>
+              <div class="chart-tip num" id="netTip"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-lg">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title-lg">成员实时在线与流量分布</h3>
+              <div class="sub-note">独立 UUID 门禁 · 点击任意成员卡片直达详细连接审计</div>
+            </div>
+            <div class="toolbar">
+              <span class="pill blue num" id="liveTotalPill">活跃连接 --</span>
+              <button class="btn sm" id="goAuditBtn">查看全部连接 ›</button>
+            </div>
+          </div>
+          <div class="storage-bar" id="memberStorageBar"></div>
+          <div class="member-strip" id="overviewMemberStrip"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">安全与防入侵体检</h3>
+                <div class="sub-note" id="secCheckTime">每 60 秒自动复检</div>
+              </div>
+              <button class="btn sm" id="forceSecBtn">🛡️ 立即复检</button>
+            </div>
+
+            <div class="ios-list mb-md">
+              <div class="ios-row">
+                <div>
+                  <div class="ios-row-title">防定位泄露拦截（VPS 侧）</div>
+                  <div class="ios-row-desc">自动拦截 Google 位置历史上报域名，保护落地 IP 地理归属</div>
+                </div>
+                <button class="ios-switch" id="ovAntiChinaSwitch" title="切换防定位泄露拦截"></button>
+              </div>
+              <div class="ios-row">
+                <div>
+                  <div class="ios-row-title">本机防外泄流量统计（仅 127.0.0.1）</div>
+                  <div class="ios-row-desc">按成员 UUID 追踪实时连接、流量与多 IP 并发，公网零暴露</div>
+                </div>
+                <button class="ios-switch" id="ovAuditSwitch" title="切换本地统计接口"></button>
+              </div>
+              <div class="ios-row">
+                <div>
+                  <div class="ios-row-title">fail2ban 自动防御 · SSH 爆破拦截</div>
+                  <div class="ios-row-desc num" id="f2bDesc">检测中...</div>
+                </div>
+                <span class="pill green num" id="f2bPill">--</span>
+              </div>
+            </div>
+
+            <div class="card-label mb-xs">UFW 防火墙已放行端口（附用途标注）</div>
+            <div class="port-grid" id="ufwPorts"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">主机档案与最近 SSH 登录</h3>
+                <div class="sub-note" id="sysOsLine">--</div>
+              </div>
+              <button class="btn sm" id="quickIpBtn">🌍 检测出口 IP</button>
+            </div>
+            <div class="ios-list mb-md">
+              <div class="ios-row">
+                <span class="ios-row-title">核心服务</span>
+                <span class="mono num" id="sbVerRow">--</span>
+              </div>
+              <div class="ios-row">
+                <span class="ios-row-title">节点入口配置</span>
+                <span class="mono" id="sbPortRow">--</span>
+              </div>
+              <div class="ios-row">
+                <span class="ios-row-title">最近 SSH 爆破评估</span>
+                <span class="pill green" id="sshVerdictPill">全部已拦截 · 0 入侵</span>
+              </div>
+            </div>
+            <div class="card-label mb-xs">最近成功登录记录 (last)</div>
+            <pre class="terminal compact" id="recentLogins">--</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mode B: Alpine / LXC NAT Overview -->
+      <div id="natOverviewPane" class="hidden">
+        <div class="card mb-lg">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title-lg" id="natTitleLine">--</h3>
+              <div class="sub-note" id="natSubLine">--</div>
+            </div>
+            <div class="toolbar">
+              <button class="btn primary sm" id="natOpenTerminalBtn">🖥️ 打开官方 Web 终端 / 面板</button>
+              <button class="btn sm" id="natPingBtn">⚡ 测端口延迟</button>
+              <button class="btn sm" id="natCopyAddrBtn">📋 复制连接信息</button>
+              <button class="btn sm" id="natEditCurBtn">✏️ 编辑节点</button>
+            </div>
+          </div>
+          <div class="grid-4" id="natKpiGrid"></div>
+        </div>
+
+        <div class="card mb-lg hidden" id="natExitCard"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">NAT 公网映射端口实时延迟 (ms)</h3>
+                <div class="sub-note" id="natPingNote">通过 Rust 原生异步 TCP 握手直测端口存活</div>
+              </div>
+              <span class="pill blue num" id="natLatestPingPill">--</span>
+            </div>
+            <div class="chart-wrap" id="natPingChartWrap">
+              <svg class="chart-svg" id="natPingChart"></svg>
+              <div class="chart-tip num" id="natPingTip"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">Alpine 轻量深度托管（可选 SSH）</h3>
+                <div class="sub-note" id="natAlpineSub">无需 Python / systemd，映射 SSH 端口后自动解锁</div>
+              </div>
+              <button class="btn sm" id="natAlpineRefreshBtn">↻ 拉取指标</button>
+            </div>
+            <div id="natAlpineBody"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: LOCAL MIHOMO / CLASH API ==================== -->
+    <section class="tab" id="tab-mihomo">
+      <div class="card mb-lg">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title-lg">本机 Mihomo / Clash API ↔ 落地节点全链路控制</h3>
+            <div class="sub-note">兼容 Clash Verge Rev / FlClash / Mihomo Meta 等全部本地 Clash API 内核，支持原版 Web UI 切换</div>
+          </div>
+          <div class="toolbar">
+            <div class="seg" id="mhViewSeg">
+              <button data-v="apple" class="active">🍎 原生整合视图</button>
+              <button data-v="zash">🧩 内嵌 Web 面板</button>
+            </div>
+            <div class="seg hidden" id="mhModeSeg">
+              <button data-mode="rule">规则</button>
+              <button data-mode="global">全局</button>
+              <button data-mode="direct">直连</button>
+            </div>
+            <button class="btn sm" id="openWebUiBtn">↗ 浏览器打开</button>
+          </div>
+        </div>
+        <div class="chain-flow">
+          <div class="chain-hop">
+            <div class="chain-hop-lbl">① 本机代理内核</div>
+            <div class="chain-hop-val" id="chLocal">Mihomo (检测中)</div>
+          </div>
+          <div class="chain-arrow">→</div>
+          <div class="chain-hop">
+            <div class="chain-hop-lbl" id="chPrimaryLbl">② 主力策略组</div>
+            <div class="chain-hop-val" id="chPrimary">--</div>
+          </div>
+          <div class="chain-arrow">→</div>
+          <div class="chain-hop">
+            <div class="chain-hop-lbl" id="chSecondaryLbl">③ 次级 / 落地组</div>
+            <div class="chain-hop-val" id="chSecondary">--</div>
+          </div>
+          <div class="chain-arrow">→</div>
+          <div class="chain-hop">
+            <div class="chain-hop-lbl">④ 兜底分流状态</div>
+            <div class="chain-hop-val" id="chFallback">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card-flush mb-lg hidden" id="mhWebEmbed">
+        <iframe id="webUiFrame" class="zash-frame" src="about:blank" title="Clash External UI"></iframe>
+      </div>
+
+      <div id="mhAppleWrap">
+        <div class="card mb-lg">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title-lg">AI 与外网真实连通性测速</h3>
+              <div class="sub-note">经本机当前代理链路并发直测 Gemini / Claude / ChatGPT / Cloudflare 真实耗时</div>
+            </div>
+            <button class="btn sm primary" id="runProbeBtn">⚡ 立即测速</button>
+          </div>
+          <div id="probeList"><div class="sub-note">点击「立即测速」查看当前链路到各大 AI 平台的真实延迟...</div></div>
+        </div>
+
+        <div class="card mb-lg hidden" id="mhOffBox">
+          <h3 class="card-title-lg mb-sm">🔑 填入本机 Mihomo / Clash 外部控制地址与密钥</h3>
+          <div class="sub-note mb-md" id="mhErrText">当前未连接到本机 Clash API 控制端口。</div>
+          <div class="row-wrap mb-md">
+            <input class="input mono w-url" id="quickMhUrl" value="http://127.0.0.1:9090" placeholder="http://127.0.0.1:9090" />
+            <input class="input mono flex-1" id="quickMhSecret" placeholder="填入外部控制 Secret（若无密码请留空）" />
+            <button class="btn primary" id="quickMhSaveBtn">💾 保存并连接</button>
+          </div>
+          <div class="sub-note">提示：仅允许连接 <code>127.0.0.1</code> / <code>localhost</code> 回环控制端口，密钥仅保存在本机 <code>config.json</code>。</div>
+        </div>
+
+        <div class="hidden" id="mhOnBox">
+          <div class="grid-4">
+            <div class="card">
+              <div class="card-label">本机活跃连接</div>
+              <div class="hero-num num" id="mhConnNum">--</div>
+              <div class="sub-note" id="mhModeNote">内核 --</div>
+            </div>
+            <div class="card">
+              <div class="card-label">本机累计上传</div>
+              <div class="hero-num num" id="mhUpNum">--</div>
+              <div class="sub-note">本次启动累计</div>
+            </div>
+            <div class="card">
+              <div class="card-label">本机累计下载</div>
+              <div class="hero-num num" id="mhDownNum">--</div>
+              <div class="sub-note">本次启动累计</div>
+            </div>
+            <div class="card">
+              <div class="card-label">内核内存占用</div>
+              <div class="hero-num num" id="mhMemNum">--</div>
+              <div class="sub-note" id="mhTunNote">TUN --</div>
+            </div>
+          </div>
+
+          <div class="card mb-lg">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">策略组与节点切换（实时同步本机内核）</h3>
+                <div class="sub-note">点击任意节点即可实时切换，点击「测速」刷新当前节点延迟</div>
+              </div>
+              <label class="check-inline">
+                <input type="checkbox" id="showAllGroups" /> 显示全部策略组
+              </label>
+            </div>
+            <div class="grid-2" id="mhGroupsGrid"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="row-inline">
+                <h3 class="card-title-lg">本机实时连接与分流排查</h3>
+                <span class="pill blue num" id="mhTableCount">0 条</span>
+              </div>
+              <div class="toolbar">
+                <div class="seg" id="mhFilterSeg">
+                  <button data-bf="all" class="active">全部</button>
+                  <button data-bf="proxy">仅代理链路</button>
+                  <button data-bf="direct">仅直连 DIRECT</button>
+                  <button data-bf="ai">仅 AI 域名</button>
+                </div>
+                <input class="input w-search" id="mhConnSearch" placeholder="搜软件 / 域名 / 规则..." />
+                <button class="btn sm danger" id="mhCloseAllBtn">清理全部</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>本机软件</th>
+                    <th>目标地址</th>
+                    <th>命中分流规则</th>
+                    <th>实际走哪条链</th>
+                    <th>流量</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="mhConnBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: AUDIT ==================== -->
+    <section class="tab" id="tab-audit">
+      <div id="natAuditPane" class="hidden"></div>
+
+      <div id="vpsAuditPane">
+        <div class="card mb-lg">
+          <div class="card-head mb-xs">
+            <div>
+              <h3 class="card-title-lg" id="auditScopeTitle">按成员实时流量与防外泄审计</h3>
+              <div class="sub-note" id="auditScopeSub">同一成员并发出现 ≥3 个不同 /24 网段自动标红预警（智能识别前置同段多 IP 负载均衡）</div>
+            </div>
+            <div class="toolbar" id="auditControls"></div>
+          </div>
+        </div>
+
+        <div id="auditOffBox" class="card empty-state-box hidden">
+          <div class="empty-state-icon">📊</div>
+          <h3 class="card-title-lg mb-sm" id="auditOffTitle">尚未开启本地统计接口</h3>
+          <p class="sub-note empty-state-desc" id="auditOffDesc">
+            开启后仅监听在服务器 <code>127.0.0.1</code>（带随机 32 位密钥），公网零暴露，同时自动写入按成员归属的 <code>auth_user</code> 路由标记。
+          </p>
+          <button class="btn primary" id="enableAuditBtn">一键安全开启本地统计</button>
+        </div>
+
+        <div id="auditOnBox" class="hidden">
+          <div class="grid-3" id="auditUserCards"></div>
+
+          <div class="card mb-lg" id="auditLogHistoryCard">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">历史来源 IP 日志聚合</h3>
+                <div class="sub-note" id="logLevelHint">--</div>
+              </div>
+              <div class="seg" id="logLevelSeg">
+                <button data-lvl="warn">省盘模式 (warn)</button>
+                <button data-lvl="info">历史审计 (info)</button>
+              </div>
+            </div>
+            <div id="logHistoryBody" class="sub-note">--</div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="row-inline">
+                <h3 class="card-title-lg">实时活跃连接明细</h3>
+                <span id="connCountTag" class="pill blue num">0 条</span>
+              </div>
+              <div class="toolbar">
+                <label class="check-inline">
+                  <input type="checkbox" id="hideSelfSsh" checked /> 隐藏面板自身 SSH (:22)
+                </label>
+                <select id="auditUserFilter"><option value="">全部成员</option></select>
+                <input class="input w-search" id="auditSearch" placeholder="搜索域名 / IP..." />
+                <button class="btn sm danger" id="closeAllConnBtn">断开全部</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>成员</th>
+                    <th>来源前置 IP</th>
+                    <th>目标地址与标注</th>
+                    <th>协议</th>
+                    <th>上传 / 下载</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="connTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: SING-BOX ==================== -->
+    <section class="tab" id="tab-singbox">
+      <div id="natSingboxPane" class="hidden"></div>
+
+      <div id="vpsSingboxPane">
+        <div class="card mb-lg">
+          <div class="card-head mb-xs">
+            <div>
+              <h3 class="card-title-lg" id="sbScopeTitle">sing-box 入站节点管理（支持增删改协议、密码与端口）</h3>
+              <div class="sub-note" id="sbScopeSub">每次修改自动备份 → <code>sing-box check</code> 语法校验 → 自动重启与失败回滚</div>
+            </div>
+            <div class="toolbar">
+              <button class="btn hidden" id="sbOpenNatTermBtn">🖥️ 官方 Web 终端</button>
+              <button class="btn primary" id="openAddInbBtn">＋ 新增入站节点</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2" id="sbInboundsGrid"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">路由与分流规则</h3>
+                <div class="sub-note" id="sbDnsSub">DNS 解析策略 --</div>
+              </div>
+            </div>
+            <div class="ios-list" id="sbRulesList"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title-lg">历史配置备份（一键回滚）</h3>
+                <div class="sub-note">自动滚动保留最近 10 份，改坏协议或密码随时一键还原</div>
+              </div>
+            </div>
+            <div class="ios-list" id="sbBackupsList"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title-lg" id="sbJsonTitle">完整配置只读检查（config.json）</h3>
+              <div class="sub-note">私钥与密钥已自动脱敏隐藏，安全可截屏</div>
+            </div>
+            <button class="btn sm" id="copySbJsonBtn">📋 复制脱敏 JSON</button>
+          </div>
+          <pre class="terminal medium" id="sbRawJson">加载中...</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: USERS ==================== -->
+    <section class="tab" id="tab-users">
+      <div class="card mb-lg">
+        <div class="card-head mb-xs">
+          <div>
+            <h3 class="card-title-lg">全节点使用用户归属与门禁</h3>
+            <div class="sub-note">一眼查看主 VPS 与全部纳管 NAT 各自归属哪些用户，支持跨机按人搜索、原地改名改密与协议级分享链接复制</div>
+          </div>
+          <div class="toolbar">
+            <div class="seg" id="usersViewSeg">
+              <button data-uv="matrix" class="active">🌐 全节点用户归属</button>
+              <button data-uv="current">📌 当前节点精细管理</button>
+            </div>
+            <button class="btn sm" id="refreshMatrixBtn">↻ 同步全节点用户</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="allNodesUsersPane">
+        <div class="card mb-lg">
+          <div class="toolbar toolbar-between">
+            <div class="toolbar">
+              <input class="input w-search" id="matrixUserSearch" placeholder="按用户名 / 协议 / 端口筛选..." />
+              <select id="matrixNodeFilter">
+                <option value="">全部节点 (VPS + NAT)</option>
+              </select>
+            </div>
+            <span class="sub-note" id="matrixSummaryText">正在并发拉取全部纳管节点的用户清单...</span>
+          </div>
+        </div>
+        <div id="allNodesUsersGrid"></div>
+      </div>
+
+      <div id="natUsersPane" class="hidden"></div>
+
+      <div id="vpsUsersPane" class="hidden">
+        <div class="card mb-lg">
+          <div class="card-head mb-xs">
+            <div>
+              <h3 class="card-title-lg">主 VPS · 成员 UUID 独立门禁</h3>
+              <div class="sub-note" id="usersMetaLine">自动备份 config.json → 语法校验 → 平滑重载，互不影响</div>
+            </div>
+            <div class="toolbar">
+              <button class="btn" id="toggleAntiChinaBtn">🛡️ 防定位拦截：检测中</button>
+              <button class="btn primary" id="openAddUserBtn">＋ 新增成员</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-label mb-sm">活跃成员（可正常连接）</div>
+        <div class="grid-3" id="activeUsersGrid"></div>
+
+        <div class="card-label mt-lg mb-sm">已暂停成员（一键恢复）</div>
+        <div class="grid-3" id="disabledUsersGrid"></div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: LOGS ==================== -->
+    <section class="tab" id="tab-logs">
+      <div id="logsNatUnconfigured" class="hidden"></div>
+
+      <div id="logsContentWrap">
+        <div class="card mb-lg">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title-lg" id="logsScopeTitle">sing-box 运维工具箱</h3>
+              <div class="sub-note" id="logsScopeSub">常用诊断命令全部按钮化，无需手动敲 SSH 指令</div>
+            </div>
+            <div class="toolbar">
+              <button class="btn primary" data-svc="restart">🔁 重启服务</button>
+              <button class="btn" id="svcReloadBtn" data-svc="reload">⚡ 校验重载</button>
+              <button class="btn" data-svc="check">✅ 语法检查</button>
+              <button class="btn" data-svc="ports">🔌 监听端口</button>
+              <button class="btn" id="logsIpCheckBtn">🌍 出口 IP 体检</button>
+              <button class="btn hidden" id="logsNatTerminalBtn">🖥️ 官方 Web 终端</button>
+            </div>
+          </div>
+          <pre class="terminal compact hidden" id="svcOutput"></pre>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title-lg" id="logsStreamTitle">sing-box 运行日志</h3>
+            <div class="toolbar">
+              <input class="input w-search" id="logFilter" placeholder="关键字筛选（如 error / Alice）" />
+              <select id="logLines">
+                <option value="80">最近 80 行</option>
+                <option value="150" selected>最近 150 行</option>
+                <option value="300">最近 300 行</option>
+              </select>
+              <button class="btn sm" id="refreshLogsBtn">↻ 刷新</button>
+              <button class="btn sm" id="copyLogsBtn">📋 复制</button>
+            </div>
+          </div>
+          <pre class="terminal" id="logsTerminal">点击「刷新」加载日志...</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: RENEWAL & MULTI-ACCOUNT ASSETS ==================== -->
+    <section class="tab" id="tab-assets">
+      <div class="grid-4">
+        <div class="card interactive">
+          <div class="card-label">折合月均总支出</div>
+          <div class="hero-num num" id="assetsMonthlyCost">¥--</div>
+          <div class="sub-note" id="assetsCostSub">自动汇总 VPS + NAT + 订阅周期</div>
+        </div>
+        <div class="card interactive">
+          <div class="card-label">纳管资产总数</div>
+          <div class="hero-num num" id="assetsTotalCount">--</div>
+          <div class="sub-note" id="assetsCountSub">-- 个商家账号 · -- 台 NAT</div>
+        </div>
+        <div class="card interactive">
+          <div class="card-label">7 天内临期预警</div>
+          <div class="hero-num num" id="assetsUrgentCount">0</div>
+          <div class="sub-note" id="assetsUrgentSub">到期提醒防断服</div>
+        </div>
+        <div class="card interactive">
+          <div class="card-label">独立隔离沙箱</div>
+          <div class="hero-num num" id="assetsSessionCount">0</div>
+          <div class="sub-note">同站多号永久不串号</div>
+        </div>
+      </div>
+
+      <div class="card mb-lg">
+        <div class="card-head mb-xs">
+          <div>
+            <h3 class="card-title-lg">多账号续费与双模流量中心</h3>
+            <div class="sub-note">支持双模按需查流：①「🪞 识别流量」免订阅直读已登录的独立窗口仪表盘；② 可选填写订阅链接后手动单次「↻ 订阅查流」（绝不后台轮询）</div>
+          </div>
+          <div class="toolbar">
+            <button class="btn sm" id="pingAllNatBtn">⚡ 全部 NAT 测速</button>
+            <button class="btn primary sm" id="addAccountBtn">＋ 新增账号</button>
+            <button class="btn sm" id="addNatBtn">＋ 新增 NAT</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-label mb-sm">服务商 / 订阅多账号（独立 WebView2 Profile 会话隔离）</div>
+      <div class="grid-3" id="providerAccountsGrid"></div>
+
+      <div class="card-label mt-lg mb-sm">纳管家宽 NAT 实例（与左上角节点切换器实时联动）</div>
+      <div class="grid-2" id="assetsNatGrid"></div>
+    </section>
+
+    <!-- ==================== TAB: SETTINGS ==================== -->
+    <section class="tab" id="tab-settings">
+      <div class="card card-narrow">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title-lg">本机连接与桌面行为配置</h3>
+            <div class="sub-note">配置保存在 <code id="cfgPathHint">config.json</code>，绝不保存任何 SSH 或网站登录密码</div>
+          </div>
+        </div>
+
+        <div class="form-grid mb-lg">
+          <div class="field"><label>主 VPS 备注名</label><input class="input" id="cfgName" placeholder="例如 My Primary VPS" /></div>
+          <div class="field"><label>主 VPS 公网 IP</label><input class="input mono" id="cfgHost" placeholder="例如 198.51.100.10" /></div>
+          <div class="field"><label>SSH 端口</label><input class="input mono" id="cfgSshPort" type="number" /></div>
+          <div class="field"><label>SSH 用户名</label><input class="input mono" id="cfgUser" /></div>
+          <div class="field col-span-full"><label>SSH 私钥路径</label><input class="input mono" id="cfgKeyPath" /></div>
+          <div class="field col-span-full"><label>Reality PublicKey（用于自动拼接 VLESS 分享链接）</label><input class="input mono" id="cfgPbk" /></div>
+          <div class="field"><label>月流量参考配额 (GB)</label><input class="input mono" id="cfgQuota" type="number" /></div>
+          <div class="field"><label>VPS 本地统计端口 (仅 127.0.0.1)</label><input class="input mono" id="cfgClashPort" type="number" /></div>
+          <div class="field"><label>本机 Mihomo / Clash 控制地址</label><input class="input mono" id="cfgMhUrl" placeholder="http://127.0.0.1:9090" /></div>
+          <div class="field"><label>本机控制密钥 (Secret)</label><input class="input mono" id="cfgMhSecret" placeholder="无密钥留空" /></div>
+        </div>
+
+        <div class="ios-list mb-lg">
+          <div class="ios-row">
+            <div>
+              <div class="ios-row-title">点击窗口关闭按钮时最小化到系统托盘</div>
+              <div class="ios-row-desc">开启后点右上角 × 将隐藏至右下角托盘常驻，可在托盘右键「彻底退出程序」</div>
+            </div>
+            <button class="ios-switch on" id="cfgCloseToTraySwitch" type="button"></button>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button class="btn primary" id="saveCfgBtn">💾 保存配置</button>
+          <button class="btn" id="testConnBtn">🔌 测试免密连接</button>
+          <button class="btn" id="sshWizardBtn">🔑 一键配置 SSH 免密向导</button>
+          <button class="btn" id="gotoAssetsFromSettingsBtn">💳 管理多账号与 NAT ›</button>
+        </div>
+
+        <div class="sub-note mt-md">
+          私钥状态：<span id="keyStatusText">--</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Unified Apple Confirm Modal -->
+  <div class="modal-bg" id="confirmModal">
+    <div class="modal">
+      <h3 id="confirmModalTitle">确认操作</h3>
+      <p class="modal-desc" id="confirmModalDesc"></p>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="confirmModalCancel">取消</button>
+        <button class="btn primary" id="confirmModalOk">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Edit / Create Provider Account -->
+  <div class="modal-bg" id="accountEditModal">
+    <div class="modal wide modal-scroll">
+      <h3 id="accModalTitle">编辑账号与续费卡片</h3>
+      <div class="form-grid mb-md">
+        <div class="field"><label>显示名称（如 CloudNet 主号）</label><input class="input" id="accName" /></div>
+        <div class="field"><label>账号备注（绝不填密码）</label><input class="input" id="accLabel" placeholder="例如 user@example.com / 副号" /></div>
+        <div class="field">
+          <label>资产分类</label>
+          <select id="accCategory">
+            <option value="airport">代理订阅</option>
+            <option value="vps">独享 VPS</option>
+            <option value="nat">家宽 NAT</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>隔离沙箱标识 (相同标识共享登录态)</label>
+          <input class="input mono" id="accProfileId" placeholder="例如 provider_1 / provider_2" />
+        </div>
+        <div class="field col-span-full"><label>官网控制台地址（独立窗口打开并用于仪表盘流量识别）</label><input class="input mono" id="accPortalUrl" placeholder="https://example.com/dashboard" /></div>
+        <div class="field col-span-full"><label>续费 / 购买直达链接（留空则同官网地址）</label><input class="input mono" id="accRenewUrl" placeholder="https://example.com/plans" /></div>
+        <div class="field col-span-full"><label>可选：订阅链接（仅在你手动点击「订阅查流」时单次拉取，绝不后台轮询）</label><input class="input mono" id="accSubUrl" placeholder="留空表示仅使用免订阅的仪表盘页面识别" /></div>
+        <div class="field"><label>套餐名称</label><input class="input" id="accPlan" placeholder="例如 Pro 2000G" /></div>
+        <div class="field">
+          <label>计费周期</label>
+          <select id="accCycle">
+            <option value="monthly">月付</option>
+            <option value="quarterly">季付</option>
+            <option value="yearly">年付</option>
+            <option value="onetime">按量 / 不限时</option>
+          </select>
+        </div>
+        <div class="field"><label>周期价格 (¥ 人民币)</label><input class="input mono" id="accPrice" type="number" step="0.1" /></div>
+        <div class="field"><label>到期日期 (YYYY-MM-DD)</label><input class="input mono" id="accExpires" type="date" /></div>
+        <div class="field">
+          <label>卡片徽标色</label>
+          <select id="accAccent">
+            <option value="blue">海蓝</option>
+            <option value="purple">紫罗兰</option>
+            <option value="teal">青蓝</option>
+            <option value="orange">暖橙</option>
+            <option value="green">翠绿</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>自动续费</label>
+          <select id="accAutoRenew">
+            <option value="false">手动续费</option>
+            <option value="true">已开启自动续费</option>
+          </select>
+        </div>
+        <div class="field col-span-full"><label>备注说明</label><input class="input" id="accNotes" /></div>
+      </div>
+      <div class="toolbar toolbar-between">
+        <div class="toolbar">
+          <button class="btn sm danger hidden" id="accDeleteBtn">🗑️ 删除</button>
+          <button class="btn sm hidden" id="accClearSessionBtn">🧹 清除此号登录态</button>
+        </div>
+        <div class="toolbar">
+          <button class="btn" id="accCancelBtn">取消</button>
+          <button class="btn primary" id="accSaveBtn">保存卡片</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Edit / Create NAT Node -->
+  <div class="modal-bg" id="natEditModal">
+    <div class="modal wide modal-scroll">
+      <h3 id="natModalTitle">编辑家宽 NAT 节点</h3>
+      <div class="form-grid mb-md">
+        <div class="field"><label>节点名称</label><input class="input" id="natName" placeholder="例如 Tokyo NAT" /></div>
+        <div class="field">
+          <label>地区</label>
+          <select id="natRegion">
+            <option value="JP">🇯🇵 日本 (JP)</option>
+            <option value="HK">🇭🇰 中国香港 (HK)</option>
+            <option value="US">🇺🇸 美国 (US)</option>
+            <option value="SG">🇸🇬 新加坡 (SG)</option>
+            <option value="TW">🇹🇼 台湾 (TW)</option>
+            <option value="AU">🇦🇺 澳大利亚 (AU)</option>
+          </select>
+        </div>
+        <div class="field col-span-full"><label>套餐与形态描述</label><input class="input" id="natPlan" placeholder="例如 Alpine LXC IPv4 NAT" /></div>
+        <div class="field col-span-full"><label>官方实例详情页 URL（点击直达 Web 终端 / 端口映射 / 续费）</label><input class="input mono" id="natPortalUrl" placeholder="https://panel.example.com/instances/1" /></div>
+        <div class="field"><label>公网 IPv4（用于原生 TCP 测速与 SSH）</label><input class="input mono" id="natPublicIp" placeholder="例如 203.0.113.21" /></div>
+        <div class="field"><label>sing-box 映射公网端口</label><input class="input mono" id="natServicePort" type="number" placeholder="例如 25000" /></div>
+        <div class="field"><label>月费 / 周期价 (¥)</label><input class="input mono" id="natPrice" type="number" step="0.1" /></div>
+        <div class="field"><label>到期日期 (YYYY-MM-DD)</label><input class="input mono" id="natExpires" type="date" /></div>
+        <div class="field"><label>月流量配额 (GB)</label><input class="input mono" id="natQuota" type="number" /></div>
+        <div class="field">
+          <label>自动续费</label>
+          <select id="natAutoRenew">
+            <option value="true">已开启自动续费</option>
+            <option value="false">手动续费</option>
+          </select>
+        </div>
+        <div class="field"><label>关联账号沙箱标识</label><input class="input mono" id="natProfileId" value="nat_main" /></div>
+        <div class="field"><label>可选：公网 SSH 映射端口（填 0 则免 SSH）</label><input class="input mono" id="natSshPort" type="number" placeholder="0 表示暂未映射" /></div>
+        <div class="field col-span-full"><label>可选：sing-box 节点分享链接（便于免 SSH 一键复制）</label><input class="input mono" id="natShareLink" placeholder="socks://... 或 vless://..." /></div>
+        <div class="field col-span-full"><label>可选：Alpine sing-box 配置文件路径</label><input class="input mono" id="natSbCfgPath" value="/usr/local/etc/sing-box/config.json" /></div>
+        <div class="field col-span-full"><label>备注</label><input class="input" id="natNotes" /></div>
+      </div>
+      <div class="toolbar toolbar-between">
+        <button class="btn sm danger hidden" id="natDeleteBtn">🗑️ 删除此 NAT</button>
+        <div class="toolbar">
+          <button class="btn" id="natCancelBtn">取消</button>
+          <button class="btn primary" id="natSaveBtn">保存 NAT</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Inbound Node (All 4 Protocols across VPS & NATs) -->
+  <div class="modal-bg" id="addInbModal">
+    <div class="modal wide modal-scroll">
+      <h3 id="inbModalTitle">新增 sing-box 入站节点</h3>
+      <div class="field mb-md">
+        <label>协议类型（四大主力协议全覆盖）</label>
+        <select id="newInbProto">
+          <option value="socks">SOCKS5（家宽落地主力 · 支持多用户与账号密码）</option>
+          <option value="vless">VLESS + Reality（TLS 伪装传输 · 自动生成/复用 X25519 密钥对）</option>
+          <option value="shadowsocks">Shadowsocks-2022（无 SNI · 适合兼容特定前置中转）</option>
+          <option value="http">HTTP 代理（支持账号密码认证）</option>
+          <option value="mixed">Mixed 混合代理（同端口同时支持 HTTP + SOCKS5）</option>
+        </select>
+      </div>
+      <div class="form-grid mb-md">
+        <div class="field"><label>节点名称 / 标识 (tag)</label><input class="input mono" id="newInbTag" placeholder="例如 socks-in-25000" /></div>
+        <div class="field"><label>监听端口 (TCP/UDP)</label><input class="input mono" id="newInbPort" type="number" placeholder="例如 25000" /></div>
+      </div>
+      <div class="field mb-md" id="newInbSniField">
+        <label>Reality 伪装域名 (SNI)</label>
+        <input class="input mono" id="newInbSni" value="www.microsoft.com" />
+      </div>
+      <div class="field mb-md" id="newInbUserField">
+        <label id="newInbUserLabel">首个使用用户名</label>
+        <input class="input" id="newInbUser" placeholder="例如 Alice / team_jp" />
+      </div>
+      <div class="field mb-md" id="newInbPassField">
+        <label id="newInbPassLabel">节点密码 / UUID（留空自动随机生成）</label>
+        <div class="input-group-inline">
+          <input class="input mono" id="newInbPass" placeholder="留空自动生成强密码" />
+          <button class="btn sm" type="button" id="genInbPassBtn">🎲 随机生成</button>
+        </div>
+      </div>
+      <div class="notice-box mb-lg" id="inbModalHint">
+        ⚠️ 每次保存前自动创建历史备份并执行 <code>sing-box check</code> 语法校验；NAT 新增非映射端口时需同步在服务商后台添加端口映射。
+      </div>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="cancelAddInb">取消</button>
+        <button class="btn primary" id="confirmAddInb">校验并保存节点</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Node User (Unified across VPS & NATs) -->
+  <div class="modal-bg" id="nodeUserModal">
+    <div class="modal">
+      <h3 id="nodeUserModalTitle">编辑节点用户</h3>
+      <div class="sub-note mb-md" id="nodeUserModalSub">--</div>
+      <div class="field mb-md" id="nodeUserNameWrap">
+        <label>用户名 / 成员备注</label>
+        <input class="input" id="nodeUserNameInput" placeholder="例如 Alice / friend_1" />
+      </div>
+      <div class="field mb-lg">
+        <label id="nodeUserPassLabel">密码 / UUID（留空保持原值或自动生成）</label>
+        <div class="input-group-inline">
+          <input class="input mono" id="nodeUserPassInput" placeholder="输入新密码或点右侧随机生成" />
+          <button class="btn sm" type="button" id="genNodeUserPassBtn">🎲 随机</button>
+        </div>
+      </div>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="cancelNodeUserBtn">取消</button>
+        <button class="btn primary" id="saveNodeUserBtn">保存并生效</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Residential Exit & AI Diagnostics Sheet -->
+  <div class="modal-bg" id="exitDiagModal">
+    <div class="modal wide modal-scroll">
+      <div class="flex-between mb-md">
+        <h3 class="card-title-lg" id="exitDiagTitle">🩺 家宽落地 IP 与 AI 网站体检</h3>
+        <div class="toolbar">
+          <button class="btn sm" id="copyExitDiagBtn">📋 复制报告</button>
+          <button class="btn sm primary" id="closeExitDiagBtn">完成</button>
+        </div>
+      </div>
+      <div id="exitDiagBody"><div class="sub-note empty-cell">正在向宿主机发起全出口诊断（通常耗时 15-40 秒）...</div></div>
+    </div>
+  </div>
+
+  <!-- Modal: Apple IP Check Sheet -->
+  <div class="modal-bg" id="ipCheckModal">
+    <div class="modal wide">
+      <div class="flex-between mb-md">
+        <h3 class="card-title-lg">🌍 VPS 出口 IP 实时体检</h3>
+        <button class="btn sm" id="closeIpModal">完成</button>
+      </div>
+      <div id="ipCheckBody"><div class="sub-note">正在从服务器实时联合查询 ipinfo + ip-api...</div></div>
+    </div>
+  </div>
+
+  <!-- Modal: Add User -->
+  <div class="modal-bg" id="addUserModal">
+    <div class="modal">
+      <h3>新增独立 UUID 成员</h3>
+      <div class="field mb-md">
+        <label>成员昵称（例如 Alice、friend_1）</label>
+        <input class="input" id="newUserName" placeholder="1-24位中英文、数字或下划线" />
+      </div>
+      <div class="field mb-lg">
+        <label>UUID（留空自动生成标准 UUIDv4）</label>
+        <input class="input mono" id="newUserUuid" placeholder="留空自动生成" />
+      </div>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="cancelAddUser">取消</button>
+        <button class="btn primary" id="confirmAddUser">确认新增并重载</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

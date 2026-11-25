@@ -1,0 +1,27 @@
+# Personal runtime config & local secrets (NEVER commit)
+config.json
+*.local.json
+*.key
+*.pem
+id_ed25519*
+id_rsa*
+
+# Compiled binaries & Cargo build artifacts
+*.exe
+*.msi
+*.nsis
+src-tauri/target/
+src-tauri/gen/
+.cargo/config.toml
+
+# Python & Node caches
+__pycache__/
+*.pyc
+node_modules/
+.vite/
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
