@@ -87,25 +87,55 @@ function main(config) {
     return vals.length ? Math.max(...vals) : 1;
   }
 
+  const isBrokenHy2 = (p) => {
+    const t = String(p?.type || "").toLowerCase();
+    const obfs = String(p?.obfs || "").toLowerCase();
+    return t === "hysteria2" && Boolean(obfs) && obfs !== "salamander";
+  };
+  const isCfWs = (p) => {
+    const netw = String(p?.network || "").toLowerCase();
+    const srv = String(p?.server || "").toLowerCase();
+    return netw === "ws" && (/(?:^|\.)cf[a-z0-9-]*\./i.test(srv) || /cloudflare|workers\.dev|pages\.dev/i.test(srv));
+  };
+  const isDedicatedLine = (p) => /专线|家宽|IEPL|IPLC|BGP|专属/i.test(String(p?.name || ""));
   const isUdpProto = (p) => /^(hysteria|hysteria2|tuic|wireguard|quic)/i.test(String(p?.type || ""));
-  const sortTcpFirst = (arr) => [...arr].sort((a, b) => Number(isUdpProto(a)) - Number(isUdpProto(b)));
+  const sortFrontPriority = (arr) =>
+    [...arr].sort((a, b) => {
+      const score = (x) =>
+        (isBrokenHy2(x) ? 100 : 0) +
+        (isCfWs(x) ? 40 : 0) +
+        (isDedicatedLine(x) ? 0 : 10) +
+        (isUdpProto(x) ? 2 : 0);
+      return score(a) - score(b);
+    });
   const unique = (arr) => Array.from(new Set(arr.filter(Boolean)));
 
   const managedNames = new Set(USER_CONFIG.landingNodes.map((n) => n.name));
   const rawProxies = Array.isArray(config.proxies) ? config.proxies : [];
-  const providerProxies = rawProxies.filter(
-    (p) => p && p.name && !managedNames.has(p.name) && !INFO_RE.test(p.name)
-  );
+  const providerProxies = rawProxies
+    .filter((p) => p && p.name && !managedNames.has(p.name) && !INFO_RE.test(p.name))
+    .map((p) => ({ ...p, "ip-version": p["ip-version"] || "ipv4-prefer" }));
   const hasProxyProviders = config["proxy-providers"] && Object.keys(config["proxy-providers"]).length > 0;
   const providerKeys = hasProxyProviders ? Object.keys(config["proxy-providers"]) : [];
 
-  const normalNodes = sortTcpFirst(providerProxies.filter((p) => getMultiplier(p.name) <= 1));
-  const highMultNodes = sortTcpFirst(providerProxies.filter((p) => getMultiplier(p.name) > 1));
+  const normalNodes = sortFrontPriority(providerProxies.filter((p) => getMultiplier(p.name) <= 1));
+  const highMultNodes = sortFrontPriority(providerProxies.filter((p) => getMultiplier(p.name) > 1));
   const apacNormal = normalNodes.filter((p) => APAC_RE.test(p.name));
-  const apacTcp = apacNormal.filter((p) => !isUdpProto(p));
-  const speedPool = (apacTcp.length >= 2 ? apacTcp : apacNormal.length ? apacNormal : normalNodes.length ? normalNodes : providerProxies)
-    .map((p) => p.name);
+  const apacClean = apacNormal.filter((p) => !isBrokenHy2(p) && !isCfWs(p));
+  const cleanNormal = normalNodes.filter((p) => !isBrokenHy2(p) && !isCfWs(p));
+  const speedPool = (
+    apacClean.length >= 2
+      ? apacClean
+      : apacNormal.length
+        ? apacNormal.filter((p) => !isBrokenHy2(p))
+        : cleanNormal.length
+          ? cleanNormal
+          : normalNodes.length
+            ? normalNodes
+            : providerProxies
+  ).map((p) => p.name);
   const frontManualList = unique([
+    ...apacClean.map((p) => p.name),
     ...apacNormal.map((p) => p.name),
     ...normalNodes.map((p) => p.name),
     ...highMultNodes.map((p) => p.name),
@@ -248,6 +278,11 @@ function main(config) {
 
     // 6. Core AI, Leak-Check & Account Identity (strict landing exit)
     "DOMAIN-SUFFIX,ipinfo.io," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ippure.com," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ipure.dev," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,scamalytics.com," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ipqualityscore.com," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ping0.cc," + EXIT_GROUP,
     "DOMAIN-SUFFIX,browserleaks.com," + EXIT_GROUP,
     "DOMAIN-SUFFIX,ipleak.net," + EXIT_GROUP,
     "DOMAIN-SUFFIX,whoer.net," + EXIT_GROUP,
