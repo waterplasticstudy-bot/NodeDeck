@@ -70,6 +70,10 @@ function walk(dir) {
     const rel = path.relative(ROOT, full);
 
     if (entry.isDirectory()) {
+      if (rel === 'exports' || entry.name === 'exports') {
+        violations.push(`FORBIDDEN EXPORT DIRECTORY PRESENT: ${rel}`);
+        continue;
+      }
       walk(full);
       continue;
     }

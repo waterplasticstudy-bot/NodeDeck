@@ -3,6 +3,7 @@
  */
 
 import { closeModal, confirmDialog, openModal } from '../components/modal.js';
+import { openQrModal } from '../components/qr-modal.js';
 import { showToast } from '../components/toast.js';
 import {
   DEFAULT_DIALER_PROXY,
@@ -130,7 +131,8 @@ function renderSingboxData(appState, data, scopeMeta) {
           <button class="btn sm primary" data-action="edit-inb" data-idx="${idx}">✏️ 编辑协议/密码</button>
           <button class="btn sm" data-action="goto-users">👥 管理用户</button>
           <button class="btn sm" data-action="copy-link" data-idx="${idx}">📋 链接</button>
-          <button class="btn sm" data-action="copy-yaml" data-idx="${idx}">📋 Mihomo YAML</button>
+          <button class="btn sm" data-action="show-qr" data-idx="${idx}">📱 二维码</button>
+          <button class="btn sm" data-action="copy-yaml" data-idx="${idx}">📋 YAML</button>
           ${canDelete
             ? `<button class="btn sm danger" data-action="del-inb" data-tag="${esc(inb.tag)}" data-port="${esc(inb.listenPort)}">🗑️</button>`
             : '<span class="sub-note">受保护</span>'}
@@ -227,7 +229,8 @@ export async function loadSingboxConfig(appState) {
   }
 }
 
-export function initSingboxEvents(appState, { switchTab, reloadOverview, openNatEditor }) {
+export function initSingboxEvents(appState, { switchTab, reloadOverview, openNatEditor, openConfigExporter }) {
+  $('sbOpenExportBtn')?.addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => openConfigExporter(null)));
   $('natSingboxPane').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-action]');
     if (!btn) return;
@@ -349,6 +352,17 @@ export function initSingboxEvents(appState, { switchTab, reloadOverview, openNat
     if (act === 'edit-inb') {
       const inb = (currentSbData.inbounds || [])[Number(btn.dataset.idx)];
       if (inb) openInboundModal(appState, inb);
+      return;
+    }
+
+    if (act === 'show-qr') {
+      const inb = (currentSbData.inbounds || [])[Number(btn.dataset.idx)];
+      if (!inb) return;
+      const link = buildStandardNodeLink(inb, currentSbData.host || '', currentSbData.publicKey || '', currentSbData.scopeMeta?.name || '');
+      openQrModal({
+        title: `📱 ${currentSbData.scopeMeta?.name || ''} · ${inb.tag} (${String(inb.type || '').toUpperCase()})`,
+        link,
+      });
       return;
     }
 

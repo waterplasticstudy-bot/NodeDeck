@@ -1,5 +1,6 @@
 {
   "name": "My Primary VPS",
+  "region": "US",
   "host": "198.51.100.10",
   "sshPort": 22,
   "user": "root",
@@ -11,6 +12,7 @@
   "mihomoSecret": "",
   "dialerProxy": "Proxy",
   "closeToTray": true,
+  "exportPresets": [],
   "natNodes": [
     {
       "id": "nat_example_1",

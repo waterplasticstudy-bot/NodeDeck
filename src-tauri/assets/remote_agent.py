@@ -41,9 +41,10 @@ ANTI_CHINA_DOMAINS = [
     "footprints-pa.googleapis.com",
     "timeline.google.com",
     "locationreporting-pa.googleapis.com",
+    "geomobileservices-pa.googleapis.com",
 ]
 SUSPICIOUS_LOCATION_RE = re.compile(
-    r"(locationhistory|geolocation|footprints-pa|timeline\.google|locationreporting)",
+    r"(locationhistory|geolocation|geomobileservices|footprints-pa|timeline\.google|locationreporting)",
     re.I,
 )
 

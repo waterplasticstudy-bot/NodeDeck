@@ -1,8 +1,10 @@
 /**
- * 全节点用户归属矩阵 + 当前节点精细用户管理（统一支持主 VPS + 全部 Alpine NAT）
+ * 全节点用户归属矩阵 + 当前节点精细用户管理（统一支持主 VPS + 全部 Alpine NAT · 联动离线配置生成器与离线二维码）
  */
 
+import { openConfigExporter } from '../components/config-exporter.js';
 import { closeModal, confirmDialog, openModal } from '../components/modal.js';
+import { openQrModal } from '../components/qr-modal.js';
 import { showToast } from '../components/toast.js';
 import {
   DEFAULT_DIALER_PROXY,
@@ -12,12 +14,6 @@ import {
   POST_MUTATION_REFRESH_MS,
 } from '../constants/ui-constants.js';
 import { copyToClipboard, invokeCmd, withButtonLoading } from '../utils/bridge.js';
-import {
-  buildAllPlatformYaml,
-  buildBettboxUniversalJs,
-  buildCloudLandingSnippet,
-  downloadTextFile,
-} from '../utils/client-export.js';
 import {
   buildMihomoYaml,
   buildStandardNodeLink,
@@ -33,68 +29,7 @@ import { getActiveNatNode } from './nat-overview.js';
 const $ = (id) => document.getElementById(id);
 
 let activeUserModalCtx = null;
-let activeExportCtx = null;
 let vpsUsersCache = null;
-
-function buildExportOutput(ctx) {
-  const format = $('exportFormatSelect').value;
-  const devicePreset = $('exportDevicePreset').value;
-  const includeOpsChannel = $('exportIncludeOps').checked;
-  const frontSubUrl = $('exportFrontSubUrl').value.trim();
-  const cloudLandingUrl = $('exportCloudLandingUrl').value.trim();
-  const excludeGecko = $('exportExcludeGecko').checked;
-
-  const isYaml = format === 'all_platform_yaml';
-  const isNatSnippet = format === 'nat_provider_yaml';
-  $('exportDeviceWrap').classList.toggle('hidden', isNatSnippet);
-  $('exportOpsWrap').classList.toggle('hidden', isNatSnippet);
-  $('exportYamlOptsWrap').classList.toggle('hidden', !isYaml);
-
-  const safeUser = String(ctx.username || 'member').replace(/[^a-zA-Z0-9_\u4e00-\u9fa5-]/g, '_');
-  if (isNatSnippet) {
-    return {
-      filename: `nat-landing-${safeUser}.yaml`,
-      content: buildCloudLandingSnippet(ctx),
-    };
-  }
-  if (isYaml) {
-    return {
-      filename: `nodedeck-all-platform-${safeUser}.yaml`,
-      content: buildAllPlatformYaml(ctx, {
-        devicePreset,
-        includeOpsChannel,
-        frontSubUrl,
-        cloudLandingUrl,
-        excludeGecko,
-      }),
-    };
-  }
-  return {
-    filename: `nodedeck-v4.3-${safeUser}-${devicePreset}.js`,
-    content: buildBettboxUniversalJs(ctx, { devicePreset, includeOpsChannel }),
-  };
-}
-
-function refreshExportPreview() {
-  if (!activeExportCtx) return;
-  const { content } = buildExportOutput(activeExportCtx);
-  $('exportPreviewCode').textContent = content;
-}
-
-function openClientExportModal(ctx) {
-  activeExportCtx = ctx;
-  const proto = String(ctx.proto || 'vless').toUpperCase();
-  $('exportModalTitle').textContent = `⚙️ 导出「${ctx.username || ctx.nodeName}」客户端配置`;
-  $('exportModalSub').textContent = `节点：${ctx.nodeName || '--'} · ${proto} :${ctx.port || '--'}（纯本机离线拼装，零网络上传）`;
-  $('exportFormatSelect').value = proto === 'SOCKS' || proto === 'SOCKS5' ? 'nat_provider_yaml' : 'bettbox_js';
-  $('exportDevicePreset').value = 'universal';
-  $('exportIncludeOps').checked = String(ctx.username || '').toLowerCase() === 'me';
-  $('exportFrontSubUrl').value = '';
-  $('exportCloudLandingUrl').value = '';
-  $('exportExcludeGecko').checked = true;
-  refreshExportPreview();
-  openModal('clientExportModal');
-}
 
 function openNodeUserModal(ctx) {
   activeUserModalCtx = ctx;
@@ -205,8 +140,9 @@ function renderMatrixView(appState) {
                 <div class="toolbar">
                   <button class="btn sm" data-action="mx-edit" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">✏️ 改名/密码</button>
                   <button class="btn sm" data-action="mx-copy-link" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📋 链接</button>
+                  <button class="btn sm" data-action="mx-qr" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📱 二维码</button>
                   <button class="btn sm" data-action="mx-copy-yaml" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📋 YAML</button>
-                  <button class="btn sm primary" data-action="mx-export" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">⚙️ 导出配置</button>
+                  <button class="btn sm primary" data-action="mx-export" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📦 生成配置</button>
                   ${r.proto !== 'shadowsocks'
                     ? `<button class="btn sm danger" data-action="mx-del" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">移除</button>`
                     : ''}
@@ -274,7 +210,7 @@ async function loadCurrentNatUsers(appState, node) {
           <div class="card-head">
             <div>
               <h3 class="card-title-lg">${flag} ${esc(node.name)} · ${esc(inb.tag)} (${esc(proto.toUpperCase())} :${esc(inb.listenPort)})</h3>
-              <div class="sub-note">共 ${users.length} 个使用用户 · 支持原地改名、改密码与一键复制 Mihomo YAML</div>
+              <div class="sub-note">共 ${users.length} 个使用用户 · 支持原地改名、改密码、离线二维码与一键生成客户端配置</div>
             </div>
             ${proto !== 'shadowsocks'
               ? `<button class="btn sm primary" data-action="nat-u-add" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-port="${esc(inb.listenPort)}">＋ 新增用户</button>`
@@ -293,8 +229,9 @@ async function loadCurrentNatUsers(appState, node) {
                   <div class="toolbar">
                     <button class="btn sm" data-action="nat-u-edit" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-port="${esc(inb.listenPort)}" data-user="${esc(uname)}" data-cred="${esc(cred)}">✏️ 改名/密码</button>
                     <button class="btn sm" data-action="nat-u-link" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 链接</button>
+                    <button class="btn sm" data-action="nat-u-qr" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📱 二维码</button>
                     <button class="btn sm" data-action="nat-u-yaml" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 YAML</button>
-                    <button class="btn sm primary" data-action="nat-u-export" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">⚙️ 导出配置</button>
+                    <button class="btn sm primary" data-action="nat-u-export" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📦 生成配置</button>
                     ${proto !== 'shadowsocks'
                       ? `<button class="btn sm danger" data-action="nat-u-del" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">移除</button>`
                       : ''}
@@ -356,8 +293,9 @@ async function loadCurrentVpsUsers(appState) {
           <div class="sub-note num">活跃流量 ↑${fmtBytes(lm.upload)} / ↓${fmtBytes(lm.download)} · 来源 IP ${lm.sourceIPs.length} 个</div>
           <div class="toolbar mt-xs">
             <button class="btn sm primary" data-action="copy-vless" data-link="${esc(u.vlessLink)}" data-name="${esc(u.name)}">📋 链接</button>
+            <button class="btn sm" data-action="vps-qr" data-link="${esc(u.vlessLink)}" data-name="${esc(u.name)}">📱 二维码</button>
             <button class="btn sm" data-action="copy-yaml" data-yaml="${esc(yaml)}" data-name="${esc(u.name)}">📋 YAML</button>
-            <button class="btn sm" data-action="export-vps-u" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">⚙️ 导出配置</button>
+            <button class="btn sm" data-action="export-vps-u" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">📦 生成配置</button>
             <button class="btn sm" data-action="edit-vps-u" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">✏️ 改名/UUID</button>
             <button class="btn sm" data-action="pause-user" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">暂停</button>
             <button class="btn sm danger" data-action="delete-user" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">删除</button>
@@ -427,6 +365,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     });
   });
 
+  $('openBatchExportBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => openConfigExporter(appState, null)));
   $('refreshMatrixBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => loadUsers(appState)));
   $('matrixUserSearch').addEventListener('input', () => renderMatrixView(appState));
   $('matrixNodeFilter').addEventListener('change', () => renderMatrixView(appState));
@@ -520,7 +459,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     }
     if (action === 'mx-export' && node && inb) {
       const proto = String(inb.type || '').toLowerCase();
-      openClientExportModal({
+      await openConfigExporter(appState, {
         nodeName: node.name,
         host: node.host || '',
         proto,
@@ -533,6 +472,14 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         credential: proto === 'vless' ? (user?.uuid || '') : (user?.password || inb.password || ''),
         flow: user?.flow || 'xtls-rprx-vision',
         dialerProxy: appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY,
+      });
+      return;
+    }
+    if (action === 'mx-qr' && node && inb) {
+      const link = buildStandardNodeLink(inb, node.host || '', node.publicKey || '', node.name, user);
+      openQrModal({
+        title: `📱 ${node.name} · ${uname} (${String(inb.type || '').toUpperCase()})`,
+        link,
       });
       return;
     }
@@ -633,7 +580,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
       const u = (inb?.usersDetail || []).find((x) => (x.username || x.name || inb.tag) === btn.dataset.user);
       if (!inb) return;
       const proto = String(inb.type || '').toLowerCase();
-      openClientExportModal({
+      await openConfigExporter(appState, {
         nodeName: snap.name || node.name,
         host: snap.host || '',
         proto,
@@ -646,6 +593,18 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         credential: proto === 'vless' ? (u?.uuid || '') : (u?.password || inb.password || ''),
         flow: u?.flow || 'xtls-rprx-vision',
         dialerProxy: appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY,
+      });
+      return;
+    }
+    if (act === 'nat-u-qr') {
+      const snap = JSON.parse($('natUsersPane').dataset.cfgJson || '{}');
+      const inb = (snap.inbounds || []).find((i) => i.tag === btn.dataset.tag);
+      const u = (inb?.usersDetail || []).find((x) => (x.username || x.name || inb.tag) === btn.dataset.user);
+      if (!inb) return;
+      const link = buildStandardNodeLink(inb, snap.host || '', snap.publicKey || '', snap.name || node.name, u);
+      openQrModal({
+        title: `📱 ${snap.name || node.name} · ${btn.dataset.user} (${String(inb.type || '').toUpperCase()})`,
+        link,
       });
       return;
     }
@@ -741,6 +700,14 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
       return;
     }
 
+    if (action === 'vps-qr') {
+      openQrModal({
+        title: `📱 ${appState.localConfig?.name || '主 VPS'} · ${name} (VLESS)`,
+        link,
+      });
+      return;
+    }
+
     if (action === 'copy-yaml') {
       try {
         await copyToClipboard(yaml);
@@ -752,7 +719,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     }
 
     if (action === 'export-vps-u') {
-      openClientExportModal({
+      await openConfigExporter(appState, {
         nodeName: appState.localConfig?.name || 'Primary VPS',
         host: appState.localConfig?.host || '',
         proto: 'vless',
@@ -828,28 +795,4 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
 
   $('activeUsersGrid').addEventListener('click', handleCardClick);
   $('disabledUsersGrid').addEventListener('click', handleCardClick);
-
-  $('closeExportConfigBtn').addEventListener('click', () => closeModal('clientExportModal'));
-  ['exportFormatSelect', 'exportDevicePreset', 'exportIncludeOps', 'exportExcludeGecko'].forEach((id) => {
-    $(id).addEventListener('change', refreshExportPreview);
-  });
-  ['exportFrontSubUrl', 'exportCloudLandingUrl'].forEach((id) => {
-    $(id).addEventListener('input', refreshExportPreview);
-  });
-  $('copyExportConfigBtn').addEventListener('click', async () => {
-    if (!activeExportCtx) return;
-    try {
-      const { content } = buildExportOutput(activeExportCtx);
-      await copyToClipboard(content);
-      showToast('已复制完整客户端配置到剪贴板');
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-  $('downloadExportConfigBtn').addEventListener('click', () => {
-    if (!activeExportCtx) return;
-    const { filename, content } = buildExportOutput(activeExportCtx);
-    downloadTextFile(filename, content);
-    showToast(`已导出文件：${filename}`);
-  });
 }

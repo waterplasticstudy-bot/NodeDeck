@@ -3,7 +3,7 @@
 #![deny(dead_code, unused_imports)]
 
 mod accounts;
-mod alpine_ssh;
+mod alpine;
 mod commands;
 mod config;
 mod constants;
@@ -29,6 +29,7 @@ pub fn run() {
             commands::save_config_cmd,
             commands::save_nat_nodes,
             commands::save_provider_accounts,
+            commands::save_export_presets,
             commands::launch_ssh_wizard,
             commands::get_overview,
             commands::get_users,
@@ -70,9 +71,13 @@ pub fn run() {
             commands::set_mihomo_mode,
             commands::select_mihomo_node,
             commands::test_mihomo_delay,
+            commands::test_mihomo_group_delay,
+            commands::get_mihomo_rules,
             commands::close_mihomo_conn,
             commands::set_window_theme,
             commands::open_external_url,
+            commands::save_export_file,
+            commands::open_export_folder,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;

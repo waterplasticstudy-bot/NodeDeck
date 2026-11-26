@@ -9,12 +9,73 @@ import { esc } from '../utils/format.js';
 
 const $ = (id) => document.getElementById(id);
 
+export const APPEARANCE_DIY_STORAGE_KEY = 'nodedeck_appearance_diy_v1';
+
+export const DEFAULT_APPEARANCE_PREFS = Object.freeze({
+  accent: 'blue',
+  density: 'comfortable',
+  hideProbe: false,
+  hideMetrics: false,
+});
+
+const VALID_ACCENTS = new Set(['blue', 'teal', 'purple', 'green', 'orange', 'graphite']);
+const VALID_DENSITIES = new Set(['comfortable', 'compact']);
+
+export function normalizeAppearancePrefs(raw = {}) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    accent: VALID_ACCENTS.has(src.accent) ? src.accent : DEFAULT_APPEARANCE_PREFS.accent,
+    density: VALID_DENSITIES.has(src.density) ? src.density : DEFAULT_APPEARANCE_PREFS.density,
+    hideProbe: Boolean(src.hideProbe),
+    hideMetrics: Boolean(src.hideMetrics),
+  };
+}
+
+export function loadAppearancePrefs() {
+  try {
+    const raw = localStorage.getItem(APPEARANCE_DIY_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_APPEARANCE_PREFS };
+    return normalizeAppearancePrefs(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_APPEARANCE_PREFS };
+  }
+}
+
+export function syncAppearanceControls(prefs) {
+  const normalized = normalizeAppearancePrefs(prefs);
+  document.querySelectorAll('#accentSwatchRow [data-accent-val]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.accentVal === normalized.accent);
+  });
+  document.querySelectorAll('#densitySeg [data-density-val]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.densityVal === normalized.density);
+  });
+  $('diyHideProbeSwitch')?.classList.toggle('on', normalized.hideProbe);
+  $('diyHideMetricsSwitch')?.classList.toggle('on', normalized.hideMetrics);
+}
+
+export function applyAppearancePrefs(prefs, persist = true) {
+  const normalized = normalizeAppearancePrefs(prefs);
+  const root = document.documentElement;
+  root.dataset.accent = normalized.accent;
+  root.dataset.density = normalized.density;
+  root.dataset.hideProbe = normalized.hideProbe ? '1' : '0';
+  root.dataset.hideMetrics = normalized.hideMetrics ? '1' : '0';
+  if (persist) {
+    try {
+      localStorage.setItem(APPEARANCE_DIY_STORAGE_KEY, JSON.stringify(normalized));
+    } catch { /* ignore */ }
+  }
+  syncAppearanceControls(normalized);
+  return normalized;
+}
+
 export async function loadConfigUI(appState) {
   const { config, keyExists, resolvedKeyPath, panelDir } = await invokeCmd('get_config');
   appState.localConfig = config;
 
   $('cfgPathHint').textContent = `${panelDir}\\config.json`;
   $('cfgName').value = config.name || '';
+  $('cfgRegion').value = config.region || 'US';
   $('cfgHost').value = config.host || '';
   $('cfgSshPort').value = config.sshPort || 22;
   $('cfgUser').value = config.user || 'root';
@@ -32,9 +93,44 @@ export async function loadConfigUI(appState) {
     : `<span class="pill red">❌ 未找到私钥</span> <code class="mono">${esc(resolvedKeyPath)}</code>`;
 }
 
-export function initSettingsEvents(appState, { reloadOverview, reloadMihomo, switchTab, refreshNodeSwitcher }) {
+export function initSettingsEvents(
+  appState,
+  { reloadOverview, reloadMihomo, switchTab, refreshNodeSwitcher, applyAppearancePrefs: applyOverride },
+) {
+  const applyPrefs = typeof applyOverride === 'function' ? applyOverride : applyAppearancePrefs;
+  syncAppearanceControls(loadAppearancePrefs());
+
   $('cfgCloseToTraySwitch').addEventListener('click', (ev) => {
     ev.currentTarget.classList.toggle('on');
+  });
+
+  $('accentSwatchRow')?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-accent-val]');
+    if (!btn) return;
+    const current = loadAppearancePrefs();
+    applyPrefs({ ...current, accent: btn.dataset.accentVal });
+  });
+
+  $('densitySeg')?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-density-val]');
+    if (!btn) return;
+    const current = loadAppearancePrefs();
+    applyPrefs({ ...current, density: btn.dataset.densityVal });
+  });
+
+  $('diyHideProbeSwitch')?.addEventListener('click', () => {
+    const current = loadAppearancePrefs();
+    applyPrefs({ ...current, hideProbe: !current.hideProbe });
+  });
+
+  $('diyHideMetricsSwitch')?.addEventListener('click', () => {
+    const current = loadAppearancePrefs();
+    applyPrefs({ ...current, hideMetrics: !current.hideMetrics });
+  });
+
+  $('resetAppearanceBtn')?.addEventListener('click', () => {
+    applyPrefs({ ...DEFAULT_APPEARANCE_PREFS });
+    showToast('已恢复默认外观与布局');
   });
 
   $('gotoAssetsFromSettingsBtn').addEventListener('click', () => switchTab('assets'));
@@ -44,6 +140,7 @@ export function initSettingsEvents(appState, { reloadOverview, reloadMihomo, swi
       await invokeCmd('save_config_cmd', {
         input: {
           name: $('cfgName').value,
+          region: $('cfgRegion').value,
           host: $('cfgHost').value,
           sshPort: Number($('cfgSshPort').value) || 22,
           user: $('cfgUser').value,

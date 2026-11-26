@@ -10,9 +10,45 @@ use crate::constants::{
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use url::Url;
+
+/// 校验并归一化自定义测速地址与超时时间（兼容 Zashboard DIY 测速设置）
+fn resolve_delay_params(
+    test_url: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<(String, u64), String> {
+    let url_str = match test_url.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(custom) => {
+            if custom.len() > 240 {
+                return Err("测速地址长度不能超过 240 字符".to_string());
+            }
+            let parsed = Url::parse(custom).map_err(|_| "自定义测速地址格式无效".to_string())?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err("测速地址仅支持 http:// 或 https://".to_string());
+            }
+            custom.to_string()
+        }
+        None => MIHOMO_DELAY_TEST_URL.to_string(),
+    };
+    let timeout = timeout_ms.unwrap_or(5_000).clamp(1_000, 15_000);
+    Ok((url_str, timeout))
+}
+
+/// RFC 3986 路径段百分号编码（空格严格编码为 %20，绝不使用 form_urlencoded 的 '+'）
+fn encode_path_segment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() * 2);
+    for &b in raw.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
 
 fn resolve_group_leaf(raw_proxies: &serde_json::Map<String, Value>, start: &str) -> String {
     let mut current = start.to_string();
@@ -478,8 +514,7 @@ impl MihomoClient {
         if group.is_empty() || name.is_empty() {
             return Err("缺少策略组或节点名称".to_string());
         }
-        let encoded_group: String =
-            url::form_urlencoded::byte_serialize(group.as_bytes()).collect();
+        let encoded_group = encode_path_segment(group);
         self.request(
             cfg,
             Method::PUT,
@@ -492,31 +527,125 @@ impl MihomoClient {
         Ok(json!({ "ok": true, "group": group, "name": name }))
     }
 
-    pub async fn test_delay(&self, cfg: &AppConfig, name: &str) -> Result<Value, String> {
+    pub async fn test_delay(
+        &self,
+        cfg: &AppConfig,
+        name: &str,
+        test_url: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<Value, String> {
         if name.is_empty() {
             return Err("缺少节点名称".to_string());
         }
-        let encoded_name: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
+        let (target_url, timeout) = resolve_delay_params(test_url, timeout_ms)?;
+        let encoded_name = encode_path_segment(name);
         let encoded_url: String =
-            url::form_urlencoded::byte_serialize(MIHOMO_DELAY_TEST_URL.as_bytes()).collect();
+            url::form_urlencoded::byte_serialize(target_url.as_bytes()).collect();
+        let http_timeout = timeout.max(MIHOMO_DELAY_TIMEOUT_MS) + 2_000;
         let res = self
             .request(
                 cfg,
                 Method::GET,
-                &format!("/proxies/{encoded_name}/delay?timeout=5000&url={encoded_url}"),
+                &format!("/proxies/{encoded_name}/delay?timeout={timeout}&url={encoded_url}"),
                 None,
-                MIHOMO_DELAY_TIMEOUT_MS,
+                http_timeout,
             )
             .await
             .map_err(|(_, msg)| msg)?;
         Ok(json!({ "ok": true, "name": name, "delay": res.get("delay").cloned().unwrap_or(Value::Null) }))
     }
 
+    /// 并发测速整个策略组下所有节点（调用 Mihomo 原生 /group/{name}/delay 端点，支持自定义测速 URL 与超时）
+    pub async fn test_group_delays(
+        &self,
+        cfg: &AppConfig,
+        group: &str,
+        test_url: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<Value, String> {
+        if group.is_empty() {
+            return Err("缺少策略组名称".to_string());
+        }
+        let (target_url, timeout) = resolve_delay_params(test_url, timeout_ms)?;
+        let encoded_group = encode_path_segment(group);
+        let encoded_url: String =
+            url::form_urlencoded::byte_serialize(target_url.as_bytes()).collect();
+        let http_timeout = timeout.max(MIHOMO_DELAY_TIMEOUT_MS) + 4_000;
+        let res = self
+            .request(
+                cfg,
+                Method::GET,
+                &format!("/group/{encoded_group}/delay?timeout={timeout}&url={encoded_url}"),
+                None,
+                http_timeout,
+            )
+            .await
+            .map_err(|(_, msg)| msg)?;
+        let count = res.as_object().map(serde_json::Map::len).unwrap_or(0);
+        Ok(json!({ "ok": true, "group": group, "testedCount": count, "delays": res }))
+    }
+
+    /// 只读获取当前 Mihomo 内核生效的分流规则与 rule-providers 清单（对齐 Zashboard 规则检视页）
+    pub async fn get_rules(&self, cfg: &AppConfig) -> Result<Value, String> {
+        let (rules_res, providers_res) = tokio::join!(
+            self.request(cfg, Method::GET, "/rules", None, MIHOMO_TIMEOUT_MS),
+            self.request(cfg, Method::GET, "/providers/rules", None, MIHOMO_TIMEOUT_MS),
+        );
+        let rules_resp = rules_res.map_err(|(_, msg)| msg)?;
+        let rules_arr = rules_resp
+            .get("rules")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let rules: Vec<Value> = rules_arr
+            .into_iter()
+            .enumerate()
+            .map(|(idx, r)| {
+                json!({
+                    "index": idx + 1,
+                    "type": r.get("type").and_then(Value::as_str).unwrap_or(""),
+                    "payload": r.get("payload").and_then(Value::as_str).unwrap_or(""),
+                    "proxy": r.get("proxy").and_then(Value::as_str).unwrap_or(""),
+                })
+            })
+            .collect();
+
+        let mut providers: Vec<Value> = providers_res
+            .ok()
+            .and_then(|v| v.get("providers").and_then(Value::as_object).cloned())
+            .map(|map| {
+                map.into_iter()
+                    .map(|(name, p)| {
+                        json!({
+                            "name": name,
+                            "behavior": p.get("behavior").and_then(Value::as_str).unwrap_or(""),
+                            "format": p.get("format").and_then(Value::as_str).unwrap_or(""),
+                            "ruleCount": p.get("ruleCount").and_then(Value::as_u64).unwrap_or(0),
+                            "updatedAt": p.get("updatedAt").and_then(Value::as_str).unwrap_or(""),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        providers.sort_by(|a, b| {
+            let na = a["name"].as_str().unwrap_or("");
+            let nb = b["name"].as_str().unwrap_or("");
+            na.cmp(nb)
+        });
+
+        Ok(json!({
+            "ok": true,
+            "totalRules": rules.len(),
+            "rules": rules,
+            "providers": providers
+        }))
+    }
+
     pub async fn close_connection(&self, cfg: &AppConfig, id: &str) -> Result<Value, String> {
         let ep = if id == "__ALL__" {
             "/connections".to_string()
         } else {
-            let enc: String = url::form_urlencoded::byte_serialize(id.as_bytes()).collect();
+            let enc = encode_path_segment(id);
             format!("/connections/{enc}")
         };
         self.request(cfg, Method::DELETE, &ep, None, MIHOMO_TIMEOUT_MS)
@@ -579,5 +708,43 @@ impl MihomoClient {
             }
         }
         json!({ "ok": true, "results": results })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_path_segment_uses_percent20_for_spaces() {
+        let enc = encode_path_segment("🤖 AI 服务");
+        assert!(!enc.contains('+'), "path segment must never contain + for spaces");
+        assert!(enc.contains("%20AI%20"));
+        assert_eq!(encode_path_segment("a/b c+d"), "a%2Fb%20c%2Bd");
+    }
+
+    #[test]
+    fn detect_chained_topology_finds_front_and_exit_groups() {
+        let raw = json!({
+            "前置代理": { "type": "Selector", "now": "JP-01", "all": ["JP-01", "HK-01"] },
+            "落地出口": { "type": "Selector", "now": "落地-NAT", "all": ["落地-NAT"] },
+            "GLOBAL": { "type": "Selector", "now": "落地出口", "all": ["前置代理", "落地出口", "落地-NAT"] },
+            "落地-NAT": { "type": "Socks5", "dialer-proxy": "前置代理" },
+            "JP-01": { "type": "Vless" }
+        });
+        let (front, exit) = detect_chained_topology(raw.as_object().unwrap());
+        assert_eq!(front.as_deref(), Some("前置代理"));
+        assert_eq!(exit.as_deref(), Some("落地出口"));
+    }
+
+    #[test]
+    fn resolve_delay_params_validates_scheme_and_clamps_timeout() {
+        let (u, t) = resolve_delay_params(None, Some(99_999)).unwrap();
+        assert_eq!(u, MIHOMO_DELAY_TEST_URL);
+        assert_eq!(t, 15_000);
+        let (u2, t2) = resolve_delay_params(Some("https://cp.cloudflare.com/generate_204"), Some(200)).unwrap();
+        assert_eq!(u2, "https://cp.cloudflare.com/generate_204");
+        assert_eq!(t2, 1_000);
+        assert!(resolve_delay_params(Some("file:///etc/passwd"), None).is_err());
     }
 }

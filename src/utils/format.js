@@ -13,6 +13,7 @@ import {
   HOST_TAG_RULES,
   PORT_ANNOTATIONS,
 } from '../constants/ui-constants.js';
+import { renderSingleProxyYaml } from './client-export.js';
 
 export function fmtBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
@@ -201,7 +202,7 @@ export function buildStandardNodeLink(inb, host, publicKey = '', nodeName = '', 
   return `${host}:${port}`;
 }
 
-/** 一键构造 Mihomo / Clash 链式落地节点 YAML 片段（自带 dialer-proxy） */
+/** 一键构造 Mihomo / Clash 链式落地节点 YAML 片段（自带 dialer-proxy，复用统一渲染引擎） */
 export function buildMihomoYaml(
   inb,
   host,
@@ -210,64 +211,24 @@ export function buildMihomoYaml(
   user = null,
   dialerProxy = DEFAULT_DIALER_PROXY,
 ) {
-  const type = String(inb.type || '').toLowerCase();
-  const port = inb.listenPort || 0;
+  const proto = String(inb.type || '').toLowerCase();
   const u = user || (Array.isArray(inb.usersDetail) && inb.usersDetail[0]) || {};
   const displayName = buildNodeRemark(nodeName, inb.tag, u.name || u.username);
-  const q = (s) => JSON.stringify(String(s ?? ''));
-
-  if (type === 'vless') {
-    return [
-      `- name: ${q(displayName)}`,
-      '  type: vless',
-      `  server: ${q(host)}`,
-      `  port: ${port}`,
-      `  uuid: ${q(u.uuid || '')}`,
-      '  network: tcp',
-      '  tls: true',
-      '  udp: true',
-      `  flow: ${q(u.flow || 'xtls-rprx-vision')}`,
-      `  servername: ${q(inb.sni || DEFAULT_SNI)}`,
-      '  client-fingerprint: chrome',
-      '  reality-opts:',
-      `    public-key: ${q(publicKey || '')}`,
-      `    short-id: ${q(inb.shortId || '')}`,
-      `  dialer-proxy: ${q(dialerProxy)}`,
-    ].join('\n');
-  }
-  if (type === 'shadowsocks') {
-    return [
-      `- name: ${q(displayName)}`,
-      '  type: ss',
-      `  server: ${q(host)}`,
-      `  port: ${port}`,
-      `  cipher: ${q(inb.method || '2022-blake3-aes-128-gcm')}`,
-      `  password: ${q(u.password || inb.password || '')}`,
-      '  udp: true',
-      `  dialer-proxy: ${q(dialerProxy)}`,
-    ].join('\n');
-  }
-  if (type === 'socks' || type === 'mixed') {
-    return [
-      `- name: ${q(displayName)}`,
-      '  type: socks5',
-      `  server: ${q(host)}`,
-      `  port: ${port}`,
-      `  username: ${q(u.username || u.name || '')}`,
-      `  password: ${q(u.password || '')}`,
-      '  udp: true',
-      `  dialer-proxy: ${q(dialerProxy)}`,
-    ].join('\n');
-  }
-  return [
-    `- name: ${q(displayName)}`,
-    '  type: http',
-    `  server: ${q(host)}`,
-    `  port: ${port}`,
-    `  username: ${q(u.username || u.name || '')}`,
-    `  password: ${q(u.password || '')}`,
-    `  dialer-proxy: ${q(dialerProxy)}`,
-  ].join('\n');
+  return renderSingleProxyYaml({
+    nodeName,
+    landingName: displayName,
+    host,
+    proto,
+    port: inb.listenPort || 0,
+    sni: inb.sni || DEFAULT_SNI,
+    shortId: inb.shortId || '',
+    publicKey,
+    method: inb.method || '',
+    username: u.username || u.name || '',
+    credential: proto === 'vless' ? (u.uuid || '') : (u.password || inb.password || ''),
+    flow: u.flow || 'xtls-rprx-vision',
+    dialerProxy,
+  });
 }
 
 export function fmtSyncedTime(unixSecStr) {

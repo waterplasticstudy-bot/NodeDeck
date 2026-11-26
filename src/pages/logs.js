@@ -1,5 +1,5 @@
 /**
- * sing-box 运维工具箱与实时日志页（支持主 VPS 与 Alpine NAT 节点自适应隔离）
+ * sing-box 运维工具箱与实时日志页（支持主 VPS 与 Alpine NAT 自适应隔离 + 日志语义高亮 + 一键导出）
  */
 
 import { showToast } from '../components/toast.js';
@@ -15,11 +15,34 @@ import { openIpCheckSheet } from './overview.js';
 
 const $ = (id) => document.getElementById(id);
 
+function classifyLogLine(line) {
+  if (/\b(ERROR|FATAL|PANIC)\b|失败|异常/i.test(line)) return 'log-err';
+  if (/\bWARN(ING)?\b|超时|timeout/i.test(line)) return 'log-warn';
+  if (/\bINFO\b/i.test(line)) return 'log-info';
+  return '';
+}
+
 export function renderLogs(appState) {
   const kw = $('logFilter').value.trim().toLowerCase();
-  $('logsTerminal').textContent = kw
-    ? (appState.rawLogs.split('\n').filter((line) => line.toLowerCase().includes(kw)).join('\n') || '(无匹配日志)')
-    : appState.rawLogs;
+  const term = $('logsTerminal');
+  const rawLines = String(appState.rawLogs || '').split('\n');
+  const filtered = kw
+    ? rawLines.filter((line) => line.toLowerCase().includes(kw))
+    : rawLines;
+
+  if (!filtered.length || (filtered.length === 1 && !filtered[0])) {
+    term.textContent = kw ? '(无匹配日志)' : '(暂无日志)';
+    return;
+  }
+
+  term.innerHTML = filtered.map((line) => {
+    const cls = classifyLogLine(line);
+    return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+  }).join('\n');
+
+  if ($('logAutoScroll')?.checked) {
+    term.scrollTop = term.scrollHeight;
+  }
 }
 
 async function openNatWebTerminal(node) {
@@ -100,6 +123,7 @@ export async function loadLogs(appState) {
 export function initLogsEvents(appState, { reloadOverview, openNatEditor }) {
   $('logFilter').addEventListener('input', () => renderLogs(appState));
   $('logLines').addEventListener('change', () => loadLogs(appState));
+  $('logAutoScroll').addEventListener('change', () => renderLogs(appState));
   $('refreshLogsBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => loadLogs(appState)));
   $('logsIpCheckBtn').addEventListener('click', openIpCheckSheet);
 
@@ -139,6 +163,20 @@ export function initLogsEvents(appState, { reloadOverview, openNatEditor }) {
       showToast(err.message, true);
     }
   });
+
+  $('exportLogsBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
+    const content = $('logsTerminal').textContent || '';
+    if (!content.trim()) return showToast('当前日志为空', true);
+    const scope = appState.activeNodeId === MAIN_VPS_NODE_ID ? 'vps' : appState.activeNodeId;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `nodedeck-logs-${scope}-${ts}.txt`;
+    try {
+      const res = await invokeCmd('save_export_file', { filename, content });
+      showToast(`日志已导出：${res.filePath || res.fileName}`);
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  }));
 
   document.querySelectorAll('[data-svc]').forEach((btn) => btn.addEventListener('click', () => {
     const action = btn.dataset.svc;

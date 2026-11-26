@@ -194,9 +194,13 @@ impl PersistentSshClient {
                 if let Ok(mut buf) = stderr_clone.lock() {
                     buf.push_str(&text);
                     if buf.len() > SSH_STDERR_MAX_LEN {
-                        let keep_from = buf.len() - SSH_STDERR_MAX_LEN;
-                        let drained: String = buf.chars().skip(keep_from).collect();
-                        *buf = drained;
+                        let excess = buf.len() - SSH_STDERR_MAX_LEN;
+                        let cut_byte = buf
+                            .char_indices()
+                            .find(|&(idx, _)| idx >= excess)
+                            .map(|(idx, _)| idx)
+                            .unwrap_or(buf.len());
+                        buf.drain(..cut_byte);
                     }
                 }
             }
@@ -347,8 +351,23 @@ impl PersistentSshClient {
 /// 一键启动交互式 SSH 免密配置向导（自动生成 Ed25519 密钥并打开交互终端输入 1 次 root 密码上传公钥）
 pub fn launch_ssh_key_wizard() -> Result<String, SshError> {
     let cfg = load_config();
-    if cfg.host.trim().is_empty() {
+    let host = cfg.host.trim();
+    let user = cfg.user.trim();
+    if host.is_empty() {
         return Err(SshError::new("NO_HOST", "请先填写并保存服务器公网 IP", None));
+    }
+    if !host
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b':' | b'-' | b'_'))
+    {
+        return Err(SshError::new("VALIDATION_ERROR", "服务器主机地址包含非法字符", None));
+    }
+    if user.is_empty()
+        || !user
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(SshError::new("VALIDATION_ERROR", "SSH 用户名包含非法字符", None));
     }
     let key_path = resolve_key_path(&cfg.key_path);
     if let Some(parent) = key_path.parent() {
@@ -387,27 +406,27 @@ pub fn launch_ssh_key_wizard() -> Result<String, SshError> {
         .map_err(|e| SshError::new("NO_SSH_KEY", format!("读取公钥文件失败: {e}"), None))?;
     let pub_b64 = B64.encode(pub_key.trim().as_bytes());
 
+    let root_login_line = if user == "root" {
+        "PermitRootLogin yes\\n"
+    } else {
+        ""
+    };
     // 远端指令：写入 authorized_keys 并确保 sshd 开启公钥认证
     let remote_cmd = format!(
-        "set -e && mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && PUBKEY=$(echo '{pub_b64}' | base64 -d) && (grep -qxF \"$PUBKEY\" ~/.ssh/authorized_keys || echo \"$PUBKEY\" >> ~/.ssh/authorized_keys) && mkdir -p /etc/ssh/sshd_config.d && printf 'PubkeyAuthentication yes\\nPermitRootLogin yes\\nAuthorizedKeysFile .ssh/authorized_keys\\n' > /etc/ssh/sshd_config.d/{SSHD_PUBKEY_CONF_NAME} && sed -i -E 's/^[[:space:]]*PubkeyAuthentication[[:space:]]+no/#PubkeyAuthentication no/Ig' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true && sshd -t && (systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd) && echo '=== SSH_KEY_UPLOAD_SUCCESS ==='"
+        "set -e && mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && PUBKEY=$(echo '{pub_b64}' | base64 -d) && (grep -qxF \"$PUBKEY\" ~/.ssh/authorized_keys || echo \"$PUBKEY\" >> ~/.ssh/authorized_keys) && if [ \"$(id -u)\" = \"0\" ]; then mkdir -p /etc/ssh/sshd_config.d && printf 'PubkeyAuthentication yes\\n{root_login_line}AuthorizedKeysFile .ssh/authorized_keys\\n' > /etc/ssh/sshd_config.d/{SSHD_PUBKEY_CONF_NAME} && sed -i -E 's/^[[:space:]]*PubkeyAuthentication[[:space:]]+no/#PubkeyAuthentication no/Ig' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true && sshd -t && (systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd); fi && echo '=== SSH_KEY_UPLOAD_SUCCESS ==='"
     );
 
-    let ssh_bin = get_ssh_bin();
+    let ssh_bin = get_ssh_bin().replace('\'', "''");
     let ps_script = format!(
         "$Host.UI.RawUI.WindowTitle = 'NodeDeck SSH 免密配置向导'; \
          Write-Host '======================================================' -ForegroundColor Cyan; \
-         Write-Host '  正在上传本机公钥至 {}@{}:{}' -ForegroundColor Cyan; \
-         Write-Host '  请按提示输入 1 次服务器 root 密码（输入不显示星号，输完回车）' -ForegroundColor Yellow; \
+         Write-Host '  正在上传本机公钥至 {user}@{host}:{}' -ForegroundColor Cyan; \
+         Write-Host '  请按提示输入 1 次服务器密码（输入不显示星号，输完回车）' -ForegroundColor Yellow; \
          Write-Host '======================================================' -ForegroundColor Cyan; \
-         & '{}' -p {} -o StrictHostKeyChecking=accept-new '{}@{}' \"{}\"; \
+         & '{ssh_bin}' -p {} -o StrictHostKeyChecking=accept-new '{user}@{host}' \"{}\"; \
          Write-Host ''; Read-Host '配置完成！按回车关闭此窗口并回到面板点刷新'",
-        cfg.user,
-        cfg.host,
         cfg.ssh_port,
-        ssh_bin,
         cfg.ssh_port,
-        cfg.user,
-        cfg.host,
         remote_cmd.replace('"', "`\"")
     );
 

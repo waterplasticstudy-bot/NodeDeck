@@ -4,32 +4,57 @@
 
 # NodeDeck
 
-**A lightweight, zero-telemetry native desktop control plane for multi-node VPS, Alpine NAT, `sing-box`, local Mihomo/Clash API, and isolated multi-account renewal management.**
+**A 100% Local-Only, Zero-Telemetry, Serverless Portable Desktop Workbench**  
+Manage your **local Mihomo / Clash API (Zashboard-style DIY)**, **Linux VPS & Alpine NAT fleet**, **`sing-box` multi-protocol users**, **pure-offline client configs & QR codes**, and **isolated multi-account sandboxes** in one ~6 MB Rust app.
 
-[简体中文](./README.md) · [English](./README_EN.md)
+[简体中文](./README.md) · [English](./README_EN.md) · [🔐 Source SHA-256 Checksums](./SHA256SUMS-source.txt)
 
+![Version](https://img.shields.io/badge/Version-v1.2.0-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
+![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)
+![Privacy](https://img.shields.io/badge/Telemetry-Zero%20%7C%20100%25%20Local-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Privacy](https://img.shields.io/badge/Telemetry-Zero-brightgreen)
 
 </div>
 
 ---
 
-## ✨ Overview
+## ✨ What Is NodeDeck? (Newcomer-Friendly)
 
-**NodeDeck** is an open-source Windows desktop control plane built with **Rust + Tauri v2 + native WebView2** (~6 MB portable executable, zero Electron bloat). Designed for self-hosted network operators managing a primary Linux VPS alongside multiple Alpine LXC NAT nodes, it follows a strict **Zero-Preset, Local-Only, Zero-Exposure** philosophy:
+**NodeDeck** is a lightweight open-source Windows desktop workbench built with **Rust + Tauri v2 + native WebView2** (~6 MB portable executable, zero Electron overhead, zero external CDN dependencies).
 
-- 🚫 **Zero Presets & Zero Telemetry**: Ships completely blank with zero hardcoded servers, providers, or subscription URLs. All VPS, NAT, and provider cards are added manually and stored solely in your local `config.json`.
-- 🔒 **Passwordless SSH & Loopback-Only Audit**: Connects directly via native Windows `ssh.exe` key auth. Live traffic/connection audit APIs bind exclusively to `127.0.0.1` with a random 32-char secret — zero public management ports exposed.
-- 🎭 **Built-in Interactive Demo Mode**: Explore every tab, chart, multi-exit grid, user matrix, and renewal card without connecting any real server — just toggle **「🎭 演示模式」** in the sidebar (powered entirely by fictional RFC 5737 data).
+You do **not** need a complex multi-server setup to get started — use only the modules you need:
+
+- 🎭 **Zero-Setup Preview**: Click **「🎭 演示模式」** (Demo Mode) in the sidebar to explore every page and DIY control instantly using fictional RFC 5737 data.
+- 💻 **Local Mihomo / Clash Only**: Connect to `127.0.0.1:9090` for a native **Zashboard-style DIY controller** (node sorting, hide timed-out nodes, custom test URL, right-click quick latency test, live rule inspector, customizable connection columns & right-click copy).
+- 🖥️ **Single VPS or NAT**: Built-in **SSH Key Wizard** sets up Ed25519 passwordless auth in seconds; manage `sing-box` protocols/users visually and export pure-offline `.yaml` / `.js` configs and offline QR codes.
+- 💳 **Multi-Account & Renewal Tracking**: Physically isolated WebView2 cookie sandboxes prevent cross-account contamination even on the same provider portal.
+
+---
+
+## 🔒 Zero Telemetry · 100% Local-Only · No Backend Server
+
+> [!IMPORTANT]
+> **NodeDeck has NO author-operated server, NO cloud relay, NO analytics/telemetry, and NO online config hosting.**  
+> Every IP, credential, preset, exported file, and browser session stays strictly on your own machine.
+
+### Local Data Footprint (All Stored Next to the App)
+- `config.json`: Your server endpoints, NAT list, renewal cards, and export presets (gitignored; **never stores SSH passwords or portal login passwords**).
+- `exports/`: Offline-generated `.yaml` / `.js` client configs and exported logs (zero cloud Gist/hosting exposure).
+- `profiles/`: Isolated WebView2 session directories per `profileId`, clearable in one click.
+
+### Auditable Network Boundaries (Verify with Any Packet Sniffer)
+1. **Your own VPS / NAT**: Direct key-auth connection via native Windows `ssh.exe` — zero intermediary relays.
+2. **Local Mihomo / Clash API**: Hard-restricted in Rust to `127.0.0.1` / `localhost` loopback only.
+3. **Offline Exporter, QR Generator & Demo Mode**: **0 network requests** (pure local ISO/IEC 18004 QR encoder & template engine).
+4. **Provider Windows & On-Demand Probes**: Opened/fetched only on explicit user clicks — **never background-polled**.
 
 ---
 
 ## 🖼️ Screenshots (Captured from Zero-Privacy Demo Mode)
 
-### 1. Primary VPS Overview (Light & Dark Themes)
+### 1. Primary VPS Overview (Light / Dark + 6 Accent Themes)
 | ☀️ Light Mode | 🌙 Dark Mode |
 | :---: | :---: |
 | ![VPS Overview Light](./docs/screenshots/overview-light.png) | ![VPS Overview Dark](./docs/screenshots/overview-dark.png) |
@@ -45,72 +70,55 @@
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Highlights (v1.2.0)
 
-1. **Hybrid Multi-Node Fleet Management**
-   - **Primary Linux VPS (`systemd`)**: Persistent SSH channel with real-time CPU, RAM, NVMe, and RX/TX charts, UFW port annotations, fail2ban intrusion telemetry, and dual-source exit IP inspection.
-   - **Alpine / LXC NAT Nodes (`OpenRC`)**: **Zero-Python** POSIX shell agent built for ultra-low-RAM containers (128 MB+), native async TCP latency probing, SWR flicker-free caching, and optional host multi-exit single-select switching (`10.10.0.1:19090/v1`).
-2. **Unified 4-Protocol `sing-box` CRUD with Automatic Rollback**
-   - Manage **VLESS + Reality**, **SOCKS5**, **Shadowsocks-2022**, **HTTP**, and **Mixed** inbounds across both VPS and NAT nodes.
-   - Every edit creates a rolling backup (last 10 retained), runs `sing-box check`, and rolls back automatically on validation error.
-3. **Cross-Node User Ownership Matrix & Standards-Compliant Share Links**
-   - Inspect, search, rename, reset credentials, pause/resume, or remove users across all VPS and NAT nodes from one unified view.
-   - Generates protocol-exact share links (`vless://`, unpadded UTF-8 Base64 `socks://` & `http://`, SIP002 RawURL Base64 `ss://`), chained **Mihomo / Clash YAML** snippets (`dialer-proxy`), and offline per-member client exports (**Bettbox v4.3 `.js`**, **all-platform dual-provider `.yaml`** for iOS + Bettbox, and **cloud landing snippets**).
-4. **Loopback-Only Live Traffic & Anti-Sharing Audit**
-   - Enable `127.0.0.1` Clash API monitoring per node to inspect live connections, per-user bandwidth, and multi-`/24` subnet concurrency alerts without exposing a single public port.
-5. **Isolated Multi-Account WebView2 Sandboxes & Dual-Mode On-Demand Traffic Sync**
-   - Dedicated `data_directory` per `profileId` keeps cookies and sessions physically separated even when signing into multiple accounts on the same provider portal.
-   - **Mode A (Zero-Subscription Dashboard Scraping)**: Read used/total traffic directly from your signed-in dashboard window via native WebView2 `eval_with_callback`.
-   - **Mode B (Optional One-Shot Subscription Check)**: Optionally attach a subscription URL for manual single-shot `subscription-userinfo` inspection (with local Mihomo proxy fallback — **never auto-polled**).
-6. **Local Mihomo / Clash API Integration**
-   - Works with **Clash Verge Rev**, **FlClash**, **Mihomo Meta**, and any local Clash External Controller (`127.0.0.1` / `localhost` only).
-   - Features **zero-hardcoded `dialer-proxy` chain topology auto-discovery** with recursive leaf resolution, smart group prioritization, live connection filtering, AI connectivity probing, and a provider-agnostic universal override template ([mihomo-universal-override.example.js](./docs/mihomo-universal-override.example.js)).
+1. **Zashboard-Style Local Mihomo / Clash DIY Controller**
+   - Sort nodes by latency / name / default, hide unavailable/timed-out nodes, switch card density (compact / standard / wide), configure custom test URL & timeout, right-click any node to quick-test delay, or batch-test full groups (RFC 3986 `%20` path-safe for spaces & emojis).
+   - **Live Rules & Rule-Providers Inspector (Read-Only)**: Search loaded rules by domain, type, or policy target and inspect `.mrs` rule-set counts.
+   - **Interactive Connections Table**: Customizable visible columns, pause refresh toggle, traffic/host/process sorting, and right-click cell copy.
+2. **Flexible Offline Multi-Node Config Exporter + 4 Guardrails**
+   - Combine any VPS/NAT nodes into a self-contained **all-platform `.yaml`** (Win10/11, iOS Clash Mi / Stash, HarmonyOS 4/7) or **Bettbox / Clash Verge v4.4 `.js`** override.
+   - Customizable exit fallback countries (Auto / 10-region chips / Self-hosted only), front transit region selection, accurate `>1x` multiplier filtering (keeps `0.1x–1x`), traffic-saving vs landing-first outbound mode, optional visual custom domain rules box (Exit / Direct / Reject), local preset profiles, Go RE2 syntax guard, and non-empty fallback safety nets.
+3. **Hybrid VPS + Alpine NAT Fleet Management & Offline QR Codes**
+   - Zero-Python Alpine POSIX agent with single-SSH bundled queries (50% fewer SSH round-trips), 128 MB RAM friendly.
+   - Unified `sing-box` CRUD for **VLESS + Reality**, **Shadowsocks-2022**, **SOCKS5**, **HTTP**, and **Mixed** with rolling backups, `sing-box check`, and automatic rollback.
+   - Zero-dependency offline ISO/IEC 18004 QR generator (V1–V16, UTF-8 safe).
+4. **Loopback-Only Audit, Multi-Account Sandboxes & Appearance DIY**
+   - `127.0.0.1` Clash API monitoring per node with multi-`/24` subnet alerts, zero public ports exposed.
+   - 6 adaptive accent themes, comfortable/compact density toggle, optional widget hiding, `Ctrl+K` Command Palette, semantic log highlighting & export.
 
 ---
 
-## 🏗️ Architecture
+## 📦 Quick Start & Verification
 
-```mermaid
-flowchart LR
-    UI["NodeDeck Desktop UI (Apple HIG + Demo Mode)"] -->|Tauri IPC| CORE["Rust Backend (tokio / reqwest / WebView2)"]
-    CORE -->|Persistent Key-Auth SSH| VPS["Primary Linux VPS (systemd · sing-box)"]
-    CORE -->|Zero-Python POSIX SSH + TCP Probe| NAT["Alpine LXC NAT Nodes (OpenRC · sing-box)"]
-    CORE -->|Loopback 127.0.0.1 Only| MIHOMO["Local Mihomo / Clash API"]
-    CORE -->|Isolated WebView2 Profiles| SANDBOX["Multi-Account Windows & Dashboard Reader"]
-    CORE -->|Local Read/Write| CFG["Local config.json (Gitignored)"]
-```
-
----
-
-## 📦 Getting Started
-
-### Option 1: Portable Release Binary
-Download the latest `NodeDeck-windows-x64.zip` from [Releases](../../releases), extract, and run `NodeDeck.exe`. Configuration is saved alongside the app in `config.json`.
+### Option 1: Portable Release Binary (Built by GitHub Actions)
+Download `NodeDeck-windows-x64.exe` (or `NodeDeck-windows-x64-portable.zip`) and `SHA256SUMS.txt` from [Releases](../../releases), verify the hash, and run directly — no installation required.
 
 ### Option 2: Build from Source (Windows 10 / 11)
-Prerequisites: [Rust Stable](https://rustup.rs/) with MSVC toolchain, plus Windows built-in WebView2 and OpenSSH (`ssh.exe`).
+Prerequisites: [Rust Stable](https://rustup.rs/) (MSVC), Node.js 22+ (for verification scripts), built-in Windows WebView2 & OpenSSH.
 
 ```powershell
 git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
 cd NodeDeck
 
-# Optional privacy guard check
-node scripts/privacy-check.mjs
+# Full 18-point static, sandbox, QR & privacy gate
+node scripts/verify-all.mjs
 
-# Strict lint & portable release build
+# Unit tests, strict clippy & portable release build
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo build --manifest-path src-tauri/Cargo.toml --release
 ```
 
-The portable executable will be generated at `src-tauri/target/release/NodeDeck.exe`. See [`config.example.json`](./config.example.json) for a clean RFC 5737 configuration schema reference.
-
 ---
 
-## 🛡️ Privacy & Security Boundaries
+## 🔐 Public SHA-256 Verification
 
-- **Local-First Storage**: `config.json` and isolated WebView2 session profiles stay strictly on your machine and are excluded via `.gitignore`.
-- **No Plaintext Passwords Stored**: SSH uses Ed25519 key auth; provider portals authenticate inside isolated WebView2 windows without NodeDeck ever reading or storing your passwords.
-- **Automated Privacy Guard**: [`scripts/privacy-check.mjs`](./scripts/privacy-check.mjs) runs in CI to block accidental leaks of personal IPs, configs, or private keys.
+- **Release Binaries**: Every GitHub Release automatically publishes **`SHA256SUMS.txt`** generated on GitHub Actions' clean `windows-latest` runner for `NodeDeck-windows-x64.exe` and `NodeDeck-windows-x64-portable.zip`. Verify locally with:
+  ```powershell
+  Get-FileHash .\NodeDeck-windows-x64.exe -Algorithm SHA256
+  ```
+- **Security-Critical Source Files**: Verified SHA-256 hashes of the remote agents, Rust core modules, offline exporter, QR generator, and verification gates are published in **[`SHA256SUMS-source.txt`](./SHA256SUMS-source.txt)**.
 
 ---
 
@@ -118,4 +126,4 @@ The portable executable will be generated at `src-tauri/target/release/NodeDeck.
 
 Released under the [MIT License](./LICENSE). See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution guidelines.
 
-> **Disclaimer**: NodeDeck is built for legitimate personal server administration, network diagnostics, and infrastructure tracking. Users are solely responsible for complying with applicable local laws and service provider terms.
+> **Disclaimer**: NodeDeck is built for legitimate personal Linux server administration, local proxy tooling visualization, network diagnostics, and infrastructure tracking. Users are solely responsible for complying with applicable local laws and service provider terms.

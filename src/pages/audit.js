@@ -292,16 +292,18 @@ export function initAuditEvents(appState, { reloadOverview, switchToNode }) {
   $('connTableBody').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-action="vps-close"]');
     if (!btn) return;
-    try {
-      if (appState.activeNodeId === MAIN_VPS_NODE_ID) {
-        await invokeCmd('close_vps_conn', { id: btn.dataset.id });
-      } else {
-        await invokeCmd('close_nat_alpine_conn', { nodeId: appState.activeNodeId, id: btn.dataset.id });
+    await withButtonLoading(btn, async () => {
+      try {
+        if (appState.activeNodeId === MAIN_VPS_NODE_ID) {
+          await invokeCmd('close_vps_conn', { id: btn.dataset.id });
+        } else {
+          await invokeCmd('close_nat_alpine_conn', { nodeId: appState.activeNodeId, id: btn.dataset.id });
+        }
+        showToast('已掐断该连接');
+        await loadAudit(appState);
+      } catch (err) {
+        showToast(err.message, true);
       }
-      showToast('已掐断该连接');
-      await loadAudit(appState);
-    } catch (err) {
-      showToast(err.message, true);
-    }
+    });
   });
 }

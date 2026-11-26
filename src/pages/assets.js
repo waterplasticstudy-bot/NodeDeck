@@ -86,20 +86,29 @@ export function renderAssetsPage(appState) {
   const sessions = appState.accountSessions || {};
 
   let monthlyTotal = 0;
+  let airportCost = 0;
+  let vpsCost = 0;
+  let natCost = 0;
   let urgentCount = 0;
   for (const acc of accounts) {
-    monthlyTotal += calcMonthlyCost(acc.priceCny, acc.billingCycle);
+    const mc = calcMonthlyCost(acc.priceCny, acc.billingCycle);
+    monthlyTotal += mc;
+    if (acc.category === 'vps') vpsCost += mc;
+    else if (acc.category === 'nat') natCost += mc;
+    else airportCost += mc;
     const effectiveExpire = acc.expiresAt || acc.trafficSnapshot?.expiresAt || '';
     if (getExpiryMeta(effectiveExpire, acc.autoRenew).urgent) urgentCount += 1;
   }
   for (const nat of nats) {
-    monthlyTotal += calcMonthlyCost(nat.priceCny, nat.billingCycle);
+    const mc = calcMonthlyCost(nat.priceCny, nat.billingCycle);
+    monthlyTotal += mc;
+    natCost += mc;
     if (getExpiryMeta(nat.expiresAt, nat.autoRenew).urgent) urgentCount += 1;
   }
 
   const activeSessionProfiles = Object.values(sessions).filter(Boolean).length;
   $('assetsMonthlyCost').textContent = `¥${monthlyTotal.toFixed(1)}`;
-  $('assetsCostSub').textContent = `约合 ¥${(monthlyTotal * 12).toFixed(0)} /年（不含按量不限时）`;
+  $('assetsCostSub').textContent = `约 ¥${(monthlyTotal * 12).toFixed(0)}/年 · 订阅 ¥${airportCost.toFixed(0)} · VPS ¥${vpsCost.toFixed(0)} · NAT ¥${natCost.toFixed(0)}`;
   $('assetsTotalCount').textContent = String(accounts.length + nats.length);
   $('assetsCountSub').textContent = `${accounts.length} 个服务商账号 · ${nats.length} 台家宽 NAT`;
   $('assetsUrgentCount').textContent = String(urgentCount);
@@ -331,12 +340,16 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
     });
     if (!ok) return;
     await withButtonLoading(ev.currentTarget, async () => {
-      const list = (appState.localConfig?.providerAccounts || []).filter((a) => a.id !== editingAccountId);
-      const res = await invokeCmd('save_provider_accounts', { accounts: list });
-      appState.localConfig.providerAccounts = res.providerAccounts;
-      closeModal('accountEditModal');
-      showToast('已删除账号卡片');
-      await loadAssets(appState);
+      try {
+        const list = (appState.localConfig?.providerAccounts || []).filter((a) => a.id !== editingAccountId);
+        const res = await invokeCmd('save_provider_accounts', { accounts: list });
+        appState.localConfig.providerAccounts = res.providerAccounts;
+        closeModal('accountEditModal');
+        showToast('已删除账号卡片');
+        await loadAssets(appState);
+      } catch (err) {
+        showToast(err.message, true);
+      }
     });
   });
 
@@ -414,13 +427,17 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
     });
     if (!ok) return;
     await withButtonLoading(ev.currentTarget, async () => {
-      const list = (appState.localConfig?.natNodes || []).filter((n) => n.id !== editingNatId);
-      const res = await invokeCmd('save_nat_nodes', { nodes: list });
-      appState.localConfig.natNodes = res.natNodes;
-      closeModal('natEditModal');
-      showToast('已删除 NAT 节点');
-      onNodesChanged(editingNatId);
-      await loadAssets(appState);
+      try {
+        const list = (appState.localConfig?.natNodes || []).filter((n) => n.id !== editingNatId);
+        const res = await invokeCmd('save_nat_nodes', { nodes: list });
+        appState.localConfig.natNodes = res.natNodes;
+        closeModal('natEditModal');
+        showToast('已删除 NAT 节点');
+        onNodesChanged(editingNatId);
+        await loadAssets(appState);
+      } catch (err) {
+        showToast(err.message, true);
+      }
     });
   });
 

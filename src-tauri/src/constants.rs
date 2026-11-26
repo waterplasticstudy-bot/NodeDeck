@@ -122,3 +122,12 @@ pub const EVENT_TRAY_REFRESH: &str = "nodedeck://tray-refresh";
 pub const MEMBER_NAME_PATTERN: &str = r"^[a-zA-Z0-9_\u4e00-\u9fa5-]{1,24}$";
 pub const NODE_USERNAME_PATTERN: &str = r"^[^\r\n\t:;'\\/\x22]{1,32}$";
 pub const INBOUND_TAG_PATTERN: &str = r"^[a-zA-Z0-9_-]{2,32}$";
+
+/// 疑似定位上报高风险域名关键字（与主 VPS 防定位拦截清单对齐，供 NAT 实时审计标红）
+pub const SUSPICIOUS_LOCATION_DOMAINS: &[&str] = &[
+    "locationhistory-pa.googleapis.com",
+    "footprints-pa.googleapis.com",
+    "timeline.google.com",
+    "locationreporting-pa.googleapis.com",
+    "geomobileservices-pa.googleapis.com",
+];

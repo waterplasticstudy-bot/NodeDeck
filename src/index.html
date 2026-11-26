@@ -14,7 +14,7 @@
       <div class="brand-row">
         <img class="app-icon-img" src="./assets/app-icon.png" alt="NodeDeck" />
         <div>
-          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.0.3</span></h1>
+          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.2.0</span></h1>
           <small id="sideHost" class="mono">等待连接...</small>
         </div>
       </div>
@@ -90,6 +90,7 @@
         </div>
       </div>
       <div class="toolbar">
+        <button class="btn sm" id="openCmdPaletteBtn" title="快速跳转节点与功能 (Ctrl+K)">⌘K 快捷跳转</button>
         <div class="seg" id="pollSeg">
           <button data-ms="5000">5秒</button>
           <button data-ms="10000" class="active">10秒</button>
@@ -353,6 +354,7 @@
           <div class="toolbar">
             <div class="seg" id="mhViewSeg">
               <button data-v="apple" class="active">🍎 原生整合视图</button>
+              <button data-v="rules">📜 分流规则</button>
               <button data-v="zash">🧩 内嵌 Web 面板</button>
             </div>
             <div class="seg hidden" id="mhModeSeg">
@@ -391,7 +393,7 @@
       </div>
 
       <div id="mhAppleWrap">
-        <div class="card mb-lg">
+        <div class="card mb-lg" id="mhProbeCard">
           <div class="card-head">
             <div>
               <h3 class="card-title-lg">AI 与外网真实连通性测速</h3>
@@ -407,14 +409,17 @@
           <div class="sub-note mb-md" id="mhErrText">当前未连接到本机 Clash API 控制端口。</div>
           <div class="row-wrap mb-md">
             <input class="input mono w-url" id="quickMhUrl" value="http://127.0.0.1:9090" placeholder="http://127.0.0.1:9090" />
-            <input class="input mono flex-1" id="quickMhSecret" placeholder="填入外部控制 Secret（若无密码请留空）" />
+            <div class="input-group-inline flex-1">
+              <input class="input mono" id="quickMhSecret" type="password" placeholder="填入外部控制 Secret（若无密码请留空）" />
+              <button class="btn sm" type="button" data-toggle-pass="quickMhSecret" title="显示明文">👁️</button>
+            </div>
             <button class="btn primary" id="quickMhSaveBtn">💾 保存并连接</button>
           </div>
           <div class="sub-note">提示：仅允许连接 <code>127.0.0.1</code> / <code>localhost</code> 回环控制端口，密钥仅保存在本机 <code>config.json</code>。</div>
         </div>
 
         <div class="hidden" id="mhOnBox">
-          <div class="grid-4">
+          <div class="grid-4" id="mhMetricsGrid">
             <div class="card">
               <div class="card-label">本机活跃连接</div>
               <div class="hero-num num" id="mhConnNum">--</div>
@@ -440,13 +445,50 @@
           <div class="card mb-lg">
             <div class="card-head">
               <div>
-                <h3 class="card-title-lg">策略组与节点切换（实时同步本机内核）</h3>
-                <div class="sub-note">点击任意节点即可实时切换，点击「测速」刷新当前节点延迟</div>
+                <h3 class="card-title-lg">策略组与节点切换（Zashboard 级 DIY 控制）</h3>
+                <div class="sub-note">支持排序、隐藏超时、自定义测速 URL、卡片密度切换，以及右键任意节点快速测速</div>
               </div>
-              <label class="check-inline">
-                <input type="checkbox" id="showAllGroups" /> 显示全部策略组
-              </label>
+              <div class="toolbar">
+                <label class="check-inline">
+                  <input type="checkbox" id="mhHideUnavailable" /> 隐藏不可用/超时
+                </label>
+                <label class="check-inline">
+                  <input type="checkbox" id="showAllGroups" /> 显示全部策略组
+                </label>
+              </div>
             </div>
+
+            <div class="mh-diy-bar mb-md">
+              <div class="row-inline">
+                <span class="sub-note">排序</span>
+                <select id="mhNodeSort">
+                  <option value="default">默认顺序</option>
+                  <option value="delay">⚡ 延迟从低到高</option>
+                  <option value="name">🔤 名称 A-Z</option>
+                </select>
+              </div>
+              <div class="row-inline">
+                <span class="sub-note">密度</span>
+                <select id="mhCardDensity">
+                  <option value="normal">标准双列</option>
+                  <option value="compact">紧凑多列</option>
+                  <option value="wide">宽松卡片</option>
+                </select>
+              </div>
+              <div class="row-inline flex-1" style="min-width:220px;">
+                <span class="sub-note">测速URL</span>
+                <input class="input mono sm-search flex-1" id="mhTestUrlInput" value="https://www.gstatic.com/generate_204" placeholder="https://www.gstatic.com/generate_204" />
+              </div>
+              <div class="row-inline">
+                <span class="sub-note">超时</span>
+                <select id="mhTestTimeoutSelect">
+                  <option value="3000">3秒</option>
+                  <option value="5000" selected>5秒</option>
+                  <option value="8000">8秒</option>
+                </select>
+              </div>
+            </div>
+
             <div class="grid-2" id="mhGroupsGrid"></div>
           </div>
 
@@ -455,6 +497,7 @@
               <div class="row-inline">
                 <h3 class="card-title-lg">本机实时连接与分流排查</h3>
                 <span class="pill blue num" id="mhTableCount">0 条</span>
+                <span class="sub-note">（右键单元格可复制域名/规则）</span>
               </div>
               <div class="toolbar">
                 <div class="seg" id="mhFilterSeg">
@@ -463,25 +506,73 @@
                   <button data-bf="direct">仅直连 DIRECT</button>
                   <button data-bf="ai">仅 AI 域名</button>
                 </div>
+                <select id="mhConnSort" title="连接排序">
+                  <option value="traffic">按流量降序</option>
+                  <option value="host">按目标域名</option>
+                  <option value="process">按软件进程</option>
+                </select>
+                <button class="btn sm" id="mhConnPauseBtn" type="button">⏸️ 暂停刷新</button>
                 <input class="input w-search" id="mhConnSearch" placeholder="搜软件 / 域名 / 规则..." />
                 <button class="btn sm danger" id="mhCloseAllBtn">清理全部</button>
               </div>
             </div>
+            <div class="conn-col-bar mb-sm" id="mhConnColsBar">
+              <span class="sub-note">显示列：</span>
+              <label class="check-inline"><input type="checkbox" data-conn-col="process" checked /> 进程</label>
+              <label class="check-inline"><input type="checkbox" data-conn-col="host" checked /> 目标地址</label>
+              <label class="check-inline"><input type="checkbox" data-conn-col="rule" checked /> 命中规则</label>
+              <label class="check-inline"><input type="checkbox" data-conn-col="chains" checked /> 代理链路</label>
+              <label class="check-inline"><input type="checkbox" data-conn-col="traffic" checked /> 流量</label>
+              <label class="check-inline"><input type="checkbox" data-conn-col="action" checked /> 操作</label>
+            </div>
             <div class="table-wrap">
-              <table>
+              <table id="mhConnTable">
                 <thead>
                   <tr>
-                    <th>本机软件</th>
-                    <th>目标地址</th>
-                    <th>命中分流规则</th>
-                    <th>实际走哪条链</th>
-                    <th>流量</th>
-                    <th>操作</th>
+                    <th data-col="process">本机软件</th>
+                    <th data-col="host">目标地址</th>
+                    <th data-col="rule">命中分流规则</th>
+                    <th data-col="chains">实际走哪条链</th>
+                    <th data-col="traffic">流量</th>
+                    <th data-col="action">操作</th>
                   </tr>
                 </thead>
                 <tbody id="mhConnBody"></tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hidden" id="mhRulesWrap">
+        <div class="card mb-lg">
+          <div class="card-head">
+            <div class="row-inline">
+              <h3 class="card-title-lg">实时规则与规则集检视器（只读）</h3>
+              <span class="pill blue num" id="mhRulesTotalBadge">0 条</span>
+            </div>
+            <div class="toolbar">
+              <input class="input w-search" id="mhRulesSearch" placeholder="搜域名 / 类型 / 策略组（如 REJECT / AI）..." />
+              <select id="mhRulesTargetFilter">
+                <option value="">全部策略目标</option>
+              </select>
+              <button class="btn sm primary" id="mhRulesRefreshBtn">↻ 刷新规则</button>
+            </div>
+          </div>
+          <div class="card-label mb-xs">已加载规则集 (rule-providers)</div>
+          <div class="row-wrap mb-md" id="mhRuleProvidersBox"><span class="sub-note">点击「刷新规则」加载本机内核规则清单...</span></div>
+          <div class="table-wrap rules-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:64px;">#</th>
+                  <th style="width:150px;">类型</th>
+                  <th>匹配载荷 (Payload)</th>
+                  <th style="width:190px;">目标策略</th>
+                </tr>
+              </thead>
+              <tbody id="mhRulesBody"></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -576,6 +667,7 @@
             </div>
             <div class="toolbar">
               <button class="btn hidden" id="sbOpenNatTermBtn">🖥️ 官方 Web 终端</button>
+              <button class="btn" id="sbOpenExportBtn">📦 生成配置文件</button>
               <button class="btn primary" id="openAddInbBtn">＋ 新增入站节点</button>
             </div>
           </div>
@@ -631,6 +723,7 @@
               <button data-uv="matrix" class="active">🌐 全节点用户归属</button>
               <button data-uv="current">📌 当前节点精细管理</button>
             </div>
+            <button class="btn sm primary" id="openBatchExportBtn">📦 生成配置文件</button>
             <button class="btn sm" id="refreshMatrixBtn">↻ 同步全节点用户</button>
           </div>
         </div>
@@ -703,6 +796,7 @@
             <h3 class="card-title-lg" id="logsStreamTitle">sing-box 运行日志</h3>
             <div class="toolbar">
               <input class="input w-search" id="logFilter" placeholder="关键字筛选（如 error / Alice）" />
+              <label class="check-inline"><input type="checkbox" id="logAutoScroll" checked /> 滚到底部</label>
               <select id="logLines">
                 <option value="80">最近 80 行</option>
                 <option value="150" selected>最近 150 行</option>
@@ -710,6 +804,7 @@
               </select>
               <button class="btn sm" id="refreshLogsBtn">↻ 刷新</button>
               <button class="btn sm" id="copyLogsBtn">📋 复制</button>
+              <button class="btn sm" id="exportLogsBtn">💾 导出</button>
             </div>
           </div>
           <pre class="terminal" id="logsTerminal">点击「刷新」加载日志...</pre>
@@ -775,15 +870,35 @@
 
         <div class="form-grid mb-lg">
           <div class="field"><label>主 VPS 备注名</label><input class="input" id="cfgName" placeholder="例如 My Primary VPS" /></div>
+          <div class="field">
+            <label>主 VPS 所在地区</label>
+            <select id="cfgRegion">
+              <option value="US">🇺🇸 美国 (US)</option>
+              <option value="JP">🇯🇵 日本 (JP)</option>
+              <option value="HK">🇭🇰 中国香港 (HK)</option>
+              <option value="SG">🇸🇬 新加坡 (SG)</option>
+              <option value="KR">🇰🇷 韩国 (KR)</option>
+              <option value="TW">🇹🇼 台湾 (TW)</option>
+              <option value="DE">🇩🇪 德国 (DE)</option>
+              <option value="GB">🇬🇧 英国 (GB)</option>
+              <option value="AU">🇦🇺 澳大利亚 (AU)</option>
+            </select>
+          </div>
           <div class="field"><label>主 VPS 公网 IP</label><input class="input mono" id="cfgHost" placeholder="例如 198.51.100.10" /></div>
           <div class="field"><label>SSH 端口</label><input class="input mono" id="cfgSshPort" type="number" /></div>
           <div class="field"><label>SSH 用户名</label><input class="input mono" id="cfgUser" /></div>
+          <div class="field"><label>月流量参考配额 (GB)</label><input class="input mono" id="cfgQuota" type="number" /></div>
           <div class="field col-span-full"><label>SSH 私钥路径</label><input class="input mono" id="cfgKeyPath" /></div>
           <div class="field col-span-full"><label>Reality PublicKey（用于自动拼接 VLESS 分享链接）</label><input class="input mono" id="cfgPbk" /></div>
-          <div class="field"><label>月流量参考配额 (GB)</label><input class="input mono" id="cfgQuota" type="number" /></div>
           <div class="field"><label>VPS 本地统计端口 (仅 127.0.0.1)</label><input class="input mono" id="cfgClashPort" type="number" /></div>
           <div class="field"><label>本机 Mihomo / Clash 控制地址</label><input class="input mono" id="cfgMhUrl" placeholder="http://127.0.0.1:9090" /></div>
-          <div class="field"><label>本机控制密钥 (Secret)</label><input class="input mono" id="cfgMhSecret" placeholder="无密钥留空" /></div>
+          <div class="field col-span-full">
+            <label>本机控制密钥 (Secret · 默认掩码防截屏泄露)</label>
+            <div class="input-group-inline">
+              <input class="input mono" id="cfgMhSecret" type="password" placeholder="无密钥留空" />
+              <button class="btn sm" type="button" data-toggle-pass="cfgMhSecret" title="显示明文">👁️</button>
+            </div>
+          </div>
           <div class="field col-span-full"><label>默认链式前置策略组名 (复制 Mihomo YAML 的 dialer-proxy)</label><input class="input mono" id="cfgDialerProxy" placeholder="例如 Proxy / 前置代理" /></div>
         </div>
 
@@ -806,6 +921,55 @@
 
         <div class="sub-note mt-md">
           私钥状态：<span id="keyStatusText">--</span>
+        </div>
+      </div>
+
+      <div class="card card-narrow mt-lg">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title-lg">🎨 面板外观与布局 DIY</h3>
+            <div class="sub-note">参考 Zashboard 轻量个性化偏好，仅保存于本机浏览器存储，随时可一键还原</div>
+          </div>
+          <button class="btn sm" type="button" id="resetAppearanceBtn">↺ 恢复默认</button>
+        </div>
+
+        <div class="form-grid mb-md">
+          <div class="field col-span-full">
+            <label>主题强调色（浅色 / 深色模式自适应）</label>
+            <div class="accent-swatch-row" id="accentSwatchRow">
+              <button type="button" class="accent-swatch active" data-accent-val="blue"><span class="swatch-dot" style="background:#007aff"></span>Apple 蓝</button>
+              <button type="button" class="accent-swatch" data-accent-val="teal"><span class="swatch-dot" style="background:#20a4b8"></span>松石青</button>
+              <button type="button" class="accent-swatch" data-accent-val="purple"><span class="swatch-dot" style="background:#9d4edd"></span>极光紫</button>
+              <button type="button" class="accent-swatch" data-accent-val="green"><span class="swatch-dot" style="background:#28b850"></span>翡翠绿</button>
+              <button type="button" class="accent-swatch" data-accent-val="orange"><span class="swatch-dot" style="background:#f5820b"></span>暖橘金</button>
+              <button type="button" class="accent-swatch" data-accent-val="graphite"><span class="swatch-dot" style="background:#5a6270"></span>石墨灰</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>全局界面信息密度</label>
+            <div class="seg" id="densitySeg">
+              <button type="button" data-density-val="comfortable" class="active">舒适标准</button>
+              <button type="button" data-density-val="compact">紧凑高密度</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ios-list">
+          <div class="ios-row">
+            <div>
+              <div class="ios-row-title">隐藏「本机 Mihomo」页的 AI 并发测速卡片</div>
+              <div class="ios-row-desc">精简页面高度，直接聚焦策略组与实时连接</div>
+            </div>
+            <button class="ios-switch" id="diyHideProbeSwitch" type="button"></button>
+          </div>
+          <div class="ios-row">
+            <div>
+              <div class="ios-row-title">隐藏「本机 Mihomo」页的 4 项汇总统计卡片</div>
+              <div class="ios-row-desc">适合紧凑小屏直接展示策略组切换与连接排查</div>
+            </div>
+            <button class="ios-switch" id="diyHideMetricsSwitch" type="button"></button>
+          </div>
         </div>
       </div>
     </section>
@@ -899,11 +1063,14 @@
           <label>地区</label>
           <select id="natRegion">
             <option value="JP">🇯🇵 日本 (JP)</option>
+            <option value="KR">🇰🇷 韩国 (KR)</option>
             <option value="HK">🇭🇰 中国香港 (HK)</option>
             <option value="US">🇺🇸 美国 (US)</option>
             <option value="SG">🇸🇬 新加坡 (SG)</option>
             <option value="TW">🇹🇼 台湾 (TW)</option>
             <option value="AU">🇦🇺 澳大利亚 (AU)</option>
+            <option value="GB">🇬🇧 英国 (GB)</option>
+            <option value="DE">🇩🇪 德国 (DE)</option>
           </select>
         </div>
         <div class="field col-span-full"><label>套餐与形态描述</label><input class="input" id="natPlan" placeholder="例如 Alpine LXC IPv4 NAT" /></div>
@@ -1046,66 +1213,217 @@
     </div>
   </div>
 
-  <!-- Modal: Export Per-Member Client Config (Pure Local Offline Generator) -->
+  <!-- Modal: Pure Offline Multi-Node Client Config Generator -->
   <div class="modal-bg" id="clientExportModal">
-    <div class="modal wide modal-scroll">
+    <div class="modal xl modal-scroll">
       <div class="flex-between mb-sm">
         <div>
-          <h3 class="card-title-lg" id="exportModalTitle">⚙️ 导出客户端专属配置</h3>
-          <div class="sub-note" id="exportModalSub">纯本地离线拼装，零网络上传</div>
+          <h3 class="card-title-lg" id="exportModalTitle">📦 离线生成客户端配置文件</h3>
+          <div class="sub-note" id="exportModalSub">纯本机离线拼装并直接落盘到 exports 目录，零在线托管、零云端暴露</div>
         </div>
         <button class="btn sm" id="closeExportConfigBtn">关闭</button>
       </div>
 
+      <div class="sub-panel mb-md">
+        <div class="form-grid" style="align-items:end;gap:10px;">
+          <div class="field">
+            <label>常用导出方案预设（本机保存，换 NAT 后一键复原并重生成）</label>
+            <div class="input-group-inline">
+              <select id="exportPresetSelect" style="flex:1;"><option value="">选择已保存方案...</option></select>
+              <button class="btn sm danger" type="button" id="delExportPresetBtn" disabled>🗑️ 删方案</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>将当前配置存为方案</label>
+            <div class="input-group-inline">
+              <input class="input" id="exportPresetNameInput" placeholder="例如：日韩双NAT-iOS自用" />
+              <button class="btn sm" type="button" id="saveExportPresetBtn">💾 存方案</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-panel mb-md">
+        <div class="flex-between mb-xs">
+          <div class="row-inline">
+            <strong style="font-size:13px;">① 勾选要打包的落地节点（支持多节点组合，如 日本 + 韩国 NAT）</strong>
+            <span class="pill blue xs" id="exportSelectedCount">已选 0 个</span>
+          </div>
+          <div class="toolbar">
+            <button class="btn sm" type="button" id="exportSelectAllBtn">全选</button>
+            <button class="btn sm" type="button" id="exportClearAllBtn">清空</button>
+          </div>
+        </div>
+        <div class="export-node-grid" id="exportNodeChecklist"></div>
+      </div>
+
       <div class="form-grid mb-md">
         <div class="field">
-          <label>导出格式</label>
+          <label>② 生成格式（纯离线本地文件）</label>
           <select id="exportFormatSelect">
-            <option value="bettbox_js">Bettbox / Clash Verge 万能脚本 v4.3 (.js)</option>
-            <option value="all_platform_yaml">全平台单链配置 · iOS + Bettbox 通用 (.yaml)</option>
-            <option value="nat_provider_yaml">云端落地节点片段 · nat-landing.yaml (Gist #1)</option>
+            <option value="all_platform_yaml">全平台单文件配置 · Win10/11 / iOS 蓝猫 / 鸿蒙 4·7 (.yaml)</option>
+            <option value="bettbox_js">Bettbox / Clash Verge 万能覆写脚本 v4.3 (.js)</option>
           </select>
         </div>
-        <div class="field" id="exportDeviceWrap">
+        <div class="field">
           <label>设备系统优化预设 (fake-ip-filter)</label>
           <select id="exportDevicePreset">
-            <option value="universal">全平台通用（iOS + Win + 鸿蒙 + vivo + 小米）</option>
-            <option value="harmony">华为鸿蒙 4 / 7 专优</option>
+            <option value="universal">全平台通用（Win10/11 + iOS + 鸿蒙 4/7 + vivo + 小米）</option>
+            <option value="harmony">华为鸿蒙 4 / 7 + Windows 专优</option>
             <option value="vivo_win">vivo OriginOS + Windows 双端</option>
           </select>
         </div>
       </div>
 
-      <div class="form-grid mb-md hidden" id="exportYamlOptsWrap">
-        <div class="field col-span-full">
-          <label>可选：前置机场订阅链接（留空则生成占位符，导入前自行填入）</label>
-          <input class="input mono" id="exportFrontSubUrl" placeholder="留空将输出 REPLACE_WITH_FRONT_AIRPORT_SUB_URL" />
+      <div class="form-grid mb-md" id="exportYamlOptsWrap">
+        <div class="field">
+          <label>从「续费与多账号」快选前置机场订阅</label>
+          <select id="exportAirportSelect">
+            <option value="">手动输入下方链接（或先在续费中心录入订阅）</option>
+          </select>
         </div>
-        <div class="field col-span-full">
-          <label>可选：云端 NAT 清单 Raw 链接（留空则把当前节点直接内置；填写则自动开启双 Provider 热同步）</label>
-          <input class="input mono" id="exportCloudLandingUrl" placeholder="例如 https://gist.githubusercontent.com/<user>/<id>/raw/nat-landing.yaml" />
-        </div>
-        <div class="field col-span-full">
-          <label class="row-inline">
-            <input type="checkbox" id="exportExcludeGecko" checked />
-            <span>前置优选池自动剔除 <code>1💎 / 非数字1结尾</code> 失效混淆节点（推荐适配主流专线机场）</span>
-          </label>
+        <div class="field">
+          <label>前置机场订阅链接（自动本机记忆，留空则输出占位符）</label>
+          <input class="input mono" id="exportFrontSubUrl" placeholder="粘贴你的前置机场订阅链接（仅保存在你本机）" />
         </div>
       </div>
 
-      <div class="field mb-md" id="exportOpsWrap">
-        <label class="row-inline">
+      <div class="form-grid mb-md">
+        <div class="field">
+          <div class="flex-between mb-xs">
+            <label style="margin:0;">可选：自动优选额外排除正则（只影响自动测速池，手动列表仍保留全部节点）</label>
+          </div>
+          <div class="input-group-inline">
+            <input class="input mono" id="exportCustomExclude" placeholder="留空兼容所有机场；如 1💎|[^0-9]1$ 或 下载推荐|移动优化\s*v6" />
+            <button class="btn sm" type="button" id="exportPresetGeckoBtn" title="排除 1💎 / 非数字1结尾 的失效混淆节点">＋1💎混淆</button>
+            <button class="btn sm" type="button" id="exportPresetSpecialBtn" title="排除仅 IPv6 或下载推荐节点">＋纯v6/下载</button>
+            <button class="btn sm" type="button" id="exportPresetClearBtn">清空</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>保存文件名（自动写入程序目录 <code>exports/</code>）</label>
+          <input class="input mono" id="exportFileNameInput" placeholder="例如 nodedeck-all-platform-jp-kr.yaml" />
+        </div>
+      </div>
+
+      <div class="sub-panel mb-md">
+        <div class="form-grid mb-sm">
+          <div class="field">
+            <label>③ 「落地出口」机场备选国家（防断连备选，可自由定制）</label>
+            <select id="exportExitFallbackMode">
+              <option value="auto">🤖 自动跟随所选落地地区（推荐）</option>
+              <option value="custom">🎯 自定义多选国家</option>
+              <option value="none">🔒 仅自建落地（绝不混入机场备选）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>前置优选地区（仅影响自动测速池）</label>
+            <select id="exportFrontRegionMode">
+              <option value="apac">🌏 亚太低延迟 (港/台/日/新/韩/澳 · 推荐)</option>
+              <option value="all">🌐 全部地区不限</option>
+              <option value="custom">🎯 自定义多选前置地区</option>
+            </select>
+          </div>
+        </div>
+        <div class="hidden mb-sm" id="exportExitRegionsWrap">
+          <div class="sub-note mb-xs">点击多选「落地出口」备选国家（如日韩 NAT 选 🇯🇵+🇰🇷）：</div>
+          <div class="region-chip-row" id="exportExitRegionsBox"></div>
+        </div>
+        <div class="hidden mb-sm" id="exportFrontRegionsWrap">
+          <div class="sub-note mb-xs">点击多选前置优选国家：</div>
+          <div class="region-chip-row" id="exportFrontRegionsBox"></div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>普通流量默认出站（流媒体 / 社交 / 漏网之鱼）</label>
+            <select id="exportDefaultOutbound">
+              <option value="landing">🛡️ 落地出口优先（全流量走纯净家宽）</option>
+              <option value="airport">⚡ 机场直出优先（仅 AI/Google/体检锁落地 · 省 NAT 流量）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>测速检测地址 (url-test / health-check)</label>
+            <div class="input-group-inline">
+              <input class="input mono" id="exportTestUrl" value="https://www.gstatic.com/generate_204" placeholder="https://www.gstatic.com/generate_204" />
+              <button class="btn sm" type="button" data-export-test-url="https://www.gstatic.com/generate_204">Gstatic</button>
+              <button class="btn sm" type="button" data-export-test-url="https://cp.cloudflare.com/generate_204">CF</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-panel mb-md" style="display:flex;flex-wrap:wrap;gap:12px 22px;padding:10px 14px;">
+        <label class="check-inline">
+          <input type="checkbox" id="exportExcludeHighMult" checked />
+          <span>自动优选剔除高倍率 (<code>&gt;1x</code>，精准放行 <code>0.1x / 0.9x / 1x</code> 及图标)</span>
+        </label>
+        <label class="check-inline">
           <input type="checkbox" id="exportIncludeOps" />
-          <span>保留 <code>🔧 运维通道</code> 分组（仅管理员本人建议勾选；发给普通成员时取消勾选更简洁且仍防回环）</span>
+          <span>保留 <code>🔧 运维通道</code> 分组（仅本人运维勾选）</span>
+        </label>
+        <label class="check-inline hidden" id="exportAllIpsLabel">
+          <input type="checkbox" id="exportIncludeAllManagedIps" />
+          <span>同时保护本机全部纳管服务器 IP（防 SSH / NodeDeck 回环，发他人勿勾）</span>
         </label>
       </div>
 
-      <pre class="terminal compact mb-md" id="exportPreviewCode" style="max-height:290px;overflow:auto;"></pre>
+      <details class="sub-panel mb-md" id="exportCustomRulesDetails">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px;">🧩 可选：可视化自定义分流规则箱（免手写 YAML，自动去重校验）</summary>
+        <div class="form-grid mt-sm" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+          <div class="field">
+            <label>强制走「落地出口」（每行一个域名）</label>
+            <textarea class="input mono" id="exportCustomExitDomains" rows="3" placeholder="例如：&#10;example.ai&#10;ip.example.com"></textarea>
+          </div>
+          <div class="field">
+            <label>强制走「DIRECT 直连」（每行一个域名）</label>
+            <textarea class="input mono" id="exportCustomDirectDomains" rows="3" placeholder="例如：&#10;internal.corp.cn"></textarea>
+          </div>
+          <div class="field">
+            <label>强制「REJECT 拦截」（每行一个域名）</label>
+            <textarea class="input mono" id="exportCustomRejectDomains" rows="3" placeholder="例如：&#10;tracker.example.com"></textarea>
+          </div>
+        </div>
+      </details>
 
-      <div class="toolbar toolbar-end">
-        <button class="btn" id="copyExportConfigBtn">📋 一键复制</button>
-        <button class="btn primary" id="downloadExportConfigBtn">💾 保存到本地文件</button>
+      <div class="export-val-bar ok mb-sm" id="exportValidationBar"></div>
+
+      <pre class="terminal code-preview mb-md" id="exportPreviewCode"></pre>
+
+      <div class="export-saved-bar hidden mb-md" id="exportSavedBar"></div>
+
+      <div class="toolbar toolbar-between">
+        <button class="btn" id="openExportDirBtn">📂 打开导出文件夹</button>
+        <div class="toolbar">
+          <button class="btn" id="copyExportConfigBtn">📋 一键复制</button>
+          <button class="btn primary" id="downloadExportConfigBtn">💾 生成并保存到本地</button>
+        </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: Pure Offline Node QR Code -->
+  <div class="modal-bg" id="qrCodeModal">
+    <div class="modal">
+      <div class="flex-between mb-xs">
+        <h3 style="margin:0;" id="qrModalTitle">📱 节点二维码</h3>
+        <button class="btn sm" id="closeQrModalBtn">关闭</button>
+      </div>
+      <div class="sub-note mb-md" id="qrModalSub">纯本机离线渲染，零网络上传</div>
+      <div class="qr-stage mb-md" id="qrSvgBox"></div>
+      <div class="uuid-box mono mb-md" id="qrModalLink" style="max-height:76px;overflow:auto;"></div>
+      <div class="toolbar toolbar-end">
+        <button class="btn primary" id="copyQrLinkBtn">📋 复制分享链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Ctrl+K Quick Command Palette -->
+  <div class="modal-bg" id="cmdPaletteModal">
+    <div class="modal wide">
+      <div class="mb-sm">
+        <input class="input" id="cmdPaletteInput" style="width:100%;" placeholder="输入关键字快速跳转节点、页面或操作（↑↓ 选择，Enter 确认，Esc 关闭）..." />
+      </div>
+      <div class="cmd-list" id="cmdPaletteList"></div>
     </div>
   </div>
 

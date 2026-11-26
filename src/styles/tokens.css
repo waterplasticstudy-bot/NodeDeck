@@ -124,3 +124,73 @@
   --term-bg: #111113;
   --term-text: #e5e5ea;
 }
+
+/* Accent Theme Overrides (Light & Dark) — Default is Apple Blue on :root */
+[data-accent="teal"] {
+  --blue: #148699;
+  --blue-bg: rgba(20, 134, 153, 0.12);
+  --blue-bg-strong: rgba(20, 134, 153, 0.20);
+}
+
+[data-accent="purple"] {
+  --blue: #8938c7;
+  --blue-bg: rgba(137, 56, 199, 0.11);
+  --blue-bg-strong: rgba(137, 56, 199, 0.19);
+}
+
+[data-accent="green"] {
+  --blue: #1b943c;
+  --blue-bg: rgba(27, 148, 60, 0.11);
+  --blue-bg-strong: rgba(27, 148, 60, 0.19);
+}
+
+[data-accent="orange"] {
+  --blue: #cc6200;
+  --blue-bg: rgba(204, 98, 0, 0.11);
+  --blue-bg-strong: rgba(204, 98, 0, 0.19);
+}
+
+[data-accent="graphite"] {
+  --blue: #4e5664;
+  --blue-bg: rgba(78, 86, 100, 0.11);
+  --blue-bg-strong: rgba(78, 86, 100, 0.18);
+}
+
+[data-theme="dark"][data-accent="teal"] {
+  --blue: #1fa3b8;
+  --blue-bg: rgba(31, 163, 184, 0.18);
+  --blue-bg-strong: rgba(31, 163, 184, 0.28);
+}
+
+[data-theme="dark"][data-accent="purple"] {
+  --blue: #a552e8;
+  --blue-bg: rgba(165, 82, 232, 0.18);
+  --blue-bg-strong: rgba(165, 82, 232, 0.28);
+}
+
+[data-theme="dark"][data-accent="green"] {
+  --blue: #26ad4b;
+  --blue-bg: rgba(38, 173, 75, 0.18);
+  --blue-bg-strong: rgba(38, 173, 75, 0.28);
+}
+
+[data-theme="dark"][data-accent="orange"] {
+  --blue: #e67605;
+  --blue-bg: rgba(230, 118, 5, 0.18);
+  --blue-bg-strong: rgba(230, 118, 5, 0.28);
+}
+
+[data-theme="dark"][data-accent="graphite"] {
+  --blue: #747e90;
+  --blue-bg: rgba(116, 126, 144, 0.20);
+  --blue-bg-strong: rgba(116, 126, 144, 0.30);
+}
+
+/* Global Compact Information Density */
+[data-density="compact"] {
+  --space-4: 12px;
+  --space-5: 15px;
+  --space-6: 18px;
+  --text-hero: 24px;
+  --text-xl: 19px;
+}

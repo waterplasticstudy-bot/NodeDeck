@@ -139,6 +139,80 @@ if [ "$ACTION" = "config" ]; then
   exit 0
 fi
 
+if [ "$ACTION" = "config_bundle" ]; then
+  if [ ! -f "$SB_CFG" ]; then
+    echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2
+    exit 1
+  fi
+  cat "$SB_CFG"
+  printf '\n===NODEDECK_BACKUPS===\n'
+  ls -1r "$SB_DIR"/config.json.bak.* 2>/dev/null | head -n 12 | while read -r f; do
+    basename "$f"
+  done
+  exit 0
+fi
+
+extract_clash_field() {
+  # 从 sing-box config.json 的 clash_api 段提取 external_controller / secret（纯 POSIX awk）
+  awk -v key="$1" '
+    /"clash_api"/ { in_ca=1 }
+    in_ca && $0 ~ ("\"" key "\"") {
+      line=$0
+      sub(".*\"" key "\"[ \t]*:[ \t]*\"", "", line)
+      sub("\".*", "", line)
+      print line
+      exit
+    }
+    in_ca && /}/ { in_ca=0 }
+  ' "$SB_CFG" 2>/dev/null
+}
+
+if [ "$ACTION" = "audit_bundle" ]; then
+  if [ ! -f "$SB_CFG" ]; then
+    echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2
+    exit 1
+  fi
+  cat "$SB_CFG"
+  printf '\n===NODEDECK_AUDIT===\n'
+  ADDR=$(extract_clash_field "external_controller")
+  SEC=$(extract_clash_field "secret")
+  if [ -n "$ADDR" ] && command -v curl >/dev/null 2>&1; then
+    if [ -n "$SEC" ]; then
+      curl -fsS --max-time 4 -H "Authorization: Bearer $SEC" "http://${ADDR}/connections" 2>/dev/null || echo "{}"
+    else
+      curl -fsS --max-time 4 "http://${ADDR}/connections" 2>/dev/null || echo "{}"
+    fi
+  fi
+  exit 0
+fi
+
+if [ "$ACTION" = "close_conn_auto" ]; then
+  if [ ! -f "$SB_CFG" ]; then
+    echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2
+    exit 1
+  fi
+  ADDR=$(extract_clash_field "external_controller")
+  SEC=$(extract_clash_field "secret")
+  CID="$EXTRA"
+  [ -z "$ADDR" ] && echo "ERROR: 本机统计接口未开启" >&2 && exit 1
+  if [ "$CID" = "__ALL__" ]; then
+    TARGET_URL="http://${ADDR}/connections"
+  else
+    TARGET_URL="http://${ADDR}/connections/${CID}"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    if [ -n "$SEC" ]; then
+      curl -fsS --max-time 4 -X DELETE -H "Authorization: Bearer $SEC" "$TARGET_URL"
+    else
+      curl -fsS --max-time 4 -X DELETE "$TARGET_URL"
+    fi
+  else
+    echo "ERROR: 容器缺少 curl" >&2
+    exit 1
+  fi
+  exit $?
+fi
+
 if [ "$ACTION" = "backups" ]; then
   ls -1r "$SB_DIR"/config.json.bak.* 2>/dev/null | head -n 12 | while read -r f; do
     basename "$f"

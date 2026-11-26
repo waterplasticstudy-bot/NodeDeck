@@ -4,36 +4,64 @@
 
 # NodeDeck
 
-**轻量原生、零遥测的跨节点桌面控制面板**  
-一站式托管 Linux VPS、Alpine 家宽 NAT、`sing-box` 多协议用户、本机 Mihomo / Clash 内核与多账号续费沙箱
+**100% 纯本地 · 零遥测 · 无服务端的轻量桌面节点工作台**  
+一站式管好你的 **本机 Mihomo / Clash（Zashboard 级 DIY）**、**Linux VPS / Alpine 家宽 NAT**、**`sing-box` 多协议用户**、**纯离线全平台配置与二维码导出** 与 **多账号防串号续费沙箱**
 
-[简体中文](./README.md) · [English](./README_EN.md)
+[简体中文](./README.md) · [English](./README_EN.md) · [🔐 源码 SHA-256 校验清单](./SHA256SUMS-source.txt)
 
+![Version](https://img.shields.io/badge/Version-v1.2.0-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
+![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)
+![Privacy](https://img.shields.io/badge/Telemetry-Zero%20%7C%20100%25%20Local-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Privacy](https://img.shields.io/badge/Telemetry-Zero-brightgreen)
 
 </div>
 
 ---
 
-## ✨ 简介
+## ✨ 这是什么？适合谁？
 
-**NodeDeck** 是一款基于 **Rust + Tauri v2 + 原生 WebView2** 构建的开源轻量桌面面板（单文件绿色版仅约 **6 MB**，无 Node.js/Electron 运行时负担）。  
-它面向自建网络节点与多台 VPS / 家宽 NAT 运维者，强调 **“零隐私预设、全手动引入、本地零暴露”**：
+**NodeDeck** 是一款基于 **Rust + Tauri v2 + Windows 原生 WebView2** 打造的开源绿色桌面软件（单文件约 **6 MB**，零 Electron 臃肿、零 Node.js 运行时、零外部 CDN 依赖）。
 
-- 🚫 **零硬编码、零后台遥测**：不包含任何预设服务器、商家网址或订阅链接，所有节点与账号均由你在本地界面手动添加，配置仅保存在你电脑的 `config.json`。
-- 🔒 **原生免密直连与零公网暴露**：通过 Windows 原生 `ssh.exe` 公钥免密连接服务器；流量统计接口强制仅监听 `127.0.0.1` 回环地址并配随机 32 位密钥，公网零端口暴露。
-- 🎭 **内置零隐私交互式演示模式（Demo Mode）**：无需准备真实服务器，打开应用点左侧 **「🎭 演示模式」**（或本地预览 `src/index.html?demo=1`），即可完整体验所有页面与交互（全部使用 RFC 5737 虚构示例数据）。
+无论你是刚入门的新手，还是同时维护多台机器的老玩家，**都不需要配齐“全家桶”才能用**：
+
+- 🎭 **零基础先体验**：打开即点左下角 **「🎭 演示模式」**，不用任何服务器就能试用全部界面与 DIY 能力（内置全虚构 RFC 5737 示例数据）。
+- 💻 **只有本机 Clash / Mihomo**：直接连接本机 `127.0.0.1:9090`，当作原生 **Zashboard 级桌面控制台**（节点排序、隐藏超时、自定义测速 URL、右键测速、实时规则搜索、连接表列自定义与右键复制）。
+- 🖥️ **只有 1 台 VPS 或 NAT**：用内置 **「🔑 一键配置 SSH 免密向导」** 30 秒接管，图形化增删改 `sing-box` 协议与用户，一键离线导出全平台配置（`.yaml` / `.js`）与纯离线二维码。
+- 💳 **多台节点 + 多商家账号**：多账号 WebView2 物理隔离永不串号、统一续费日历与折合月均支出统计。
 
 ---
 
-## 🖼️ 演示界面（Demo Mode 实机截图）
+## 🔒 零遥测 · 纯本地 · 不走任何服务端（透明声明）
 
-> 以下截图均直接采集自内置 **演示模式（RFC 5737 虚构示例数据）**，展示浅色 / 深色双外观与核心页面。
+> [!IMPORTANT]
+> **NodeDeck 没有任何作者后端服务器、云端中转、订阅托管或数据收集接口。**  
+> 你在软件中录入的 IP、密钥、订阅链接、导出的配置与登录态 **100% 仅保存在你自己的电脑本地**，全程完全开源可审计。
 
-### 1. 主 VPS 节点总览（浅色 / 深色自适应）
+### 1. 本机数据落盘清单（全部位于程序同目录）
+| 本地路径 | 存了什么 | 隐私保护机制 |
+| :--- | :--- | :--- |
+| `config.json` | 你的节点连接档案、NAT 清单、账号卡片与常用导出方案预设 | 仅存你本机；已在 `.gitignore` 严格忽略；**绝不保存 SSH 密码或网站登录密码** |
+| `exports/` | 你手动点击生成的离线 `.yaml` / `.js` 客户端配置与导出日志 | 纯本机离线拼装并落盘，**零云端 Gist / 零在线托管链接** |
+| `profiles/` | 多账号独立 WebView2 浏览器沙箱 Cookie 目录 | 每个 `profileId` 物理隔离，支持一键彻底清除登录态 |
+
+### 2. 完整网络流向公开审计表（随时可抓包核验）
+NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统计数据；程序发出的全部网络请求严格限定为以下几类：
+
+| 功能模块 | 目标地址 | 触发时机 | 说明 |
+| :--- | :--- | :--- | :--- |
+| 主 VPS / NAT 运维 | **你自己的服务器 IP** | 打开节点面板 / 手动点击操作 | 调用 Windows 原生 `ssh.exe` 公钥直连，无任何中间服务器 |
+| 本机 Mihomo 控制 | **仅限 `127.0.0.1` / `localhost`** | 停留在 Mihomo 页或手动切换/测速 | 代码级硬限制禁止连接非本机回环地址 |
+| 离线配置导出 / 二维码 / 演示模式 | **无（0 网络请求）** | 随时 | 100% 纯本地离线计算（内置 ISO/IEC 18004 二维码编码器） |
+| 账号独立窗口 / 仪表盘识别 | **你自己填写的官网 URL** | 仅在你主动点击打开/识别时 | 无后台静默轮询；可选「订阅查流」也仅在手动点击时单次拉取 |
+| 出口 IP 体检 / AI 连通性测速 | `ipinfo.io` / `ip-api.com` / AI 探测点 | 仅在你主动点击体检/测速按钮时 | 用于诊断节点连通性与出口归属 |
+
+---
+
+## 🖼️ 演示界面（采集自零隐私 Demo Mode）
+
+### 1. 主 VPS 节点总览（浅色 / 深色 + 6 套强调色 DIY）
 | ☀️ 浅色模式 (Light) | 🌙 深色模式 (Dark) |
 | :---: | :---: |
 | ![VPS Overview Light](./docs/screenshots/overview-light.png) | ![VPS Overview Dark](./docs/screenshots/overview-dark.png) |
@@ -49,37 +77,88 @@
 
 ---
 
-## 🚀 核心特性
+## 🚀 核心功能一览（v1.2.0）
 
-### 1. 混合架构全纳管：主 VPS + 任意台 Alpine / LXC NAT
-- **主 VPS（Ubuntu / Debian `systemd`）**：长连接持久化 SSH 通道，低开销采集 CPU / 内存 / NVMe 磁盘 / 实时吞吐曲线、UFW 防火墙标注、fail2ban 爆破拦截统计与出口 IP 体检。
-- **家宽 / LXC NAT（Alpine OpenRC）**：**零 Python 依赖**（纯 POSIX `sh` + 原生异步 TCP 握手探活 + 30 秒 SWR 无闪烁缓存），适配 128 MB 超小内存容器；支持免 SSH 纯面板模式，也支持映射 SSH 端口解锁深度托管。
-- **宿主机多出口单选控制**：兼容支持宿主机出口切换 API（`http://10.10.0.1:19090/v1`）的家宽 NAT，提供互斥单选网格、全出口延迟实测、分地区计费明细与落地 IP / AI 网站体检。
+### 1. 本机 Mihomo / Clash 联动（参考 Zashboard DIY 体验）
+- 兼容 **Bettbox / Clash Verge Rev / FlClash / Mihomo Meta** 等全部本地 Clash API 内核，支持原版 Web UI 随时切换。
+- **策略组 DIY 工具条**：节点按延迟/名称/默认排序、一键 **隐藏不可用/超时节点**、卡片密度切换（标准双列 / 紧凑多列 / 宽松卡片）、自定义测速 URL 与超时、**右键任意节点快捷测速**、单组并发 `⚡ 测整组`（完整支持含空格与 Emoji 策略组）。
+- **📜 实时分流规则检视器（只读）**：直查当前内核生效的全部规则与 `.mrs` 规则集加载条数，按域名/类型/策略组秒级检索。
+- **实时连接表 Zashboard 交互**：列显隐自定义、`⏸️ 暂停刷新`、按流量/域名/进程排序、**右键单元格一键复制域名或规则**。
 
-### 2. `sing-box` 四大主力协议统一增删改 + 自动回滚
-- 跨主 VPS 与全部 Alpine NAT 统一支持 **VLESS + Reality**、**SOCKS5**、**Shadowsocks-2022**、**HTTP**、**Mixed** 入站节点的增、删、改（协议、端口、名称、SNI、密码 / UUID / SS-2022 密钥）。
-- **原子安全护栏**：每次变更自动滚动备份（保留最近 10 份）→ 执行 `sing-box check` 语法校验 → 自动重载/重启 → 校验失败自动秒级回滚，绝不把线上节点改挂。
+### 2. 离线客户端配置生成器（自由 DIY + 4 重防出错护栏）
+- 支持自由勾选单台或多台落地节点（VPS + 任意台 NAT 组合），纯本机离线生成：
+  - **全平台单文件 `.yaml`**（Win10/11 · iOS 蓝猫 Clash Mi / Stash · 鸿蒙 4/7 通用，内置 50 MB iOS 防崩护栏与自包含防回环规则）；
+  - **Bettbox / Clash Verge 万能覆写 `.js` v4.4**。
+- **高度自由 DIY**：
+  - 「落地出口」备选国家 3 模式（🤖 自动跟随所选落地地区 / 🎯 10 国多选胶囊 / 🔒 仅自建落地）；
+  - 前置地区 3 模式（亚太低延迟 / 全部 / 自定义）、精准 `>1x` 倍率过滤（放行 `0.1x / 0.5x / 0.9x / 1x`）、自定义测速 URL；
+  - 普通流量默认去向（`🛡️ 落地出口优先` vs `⚡ 机场直出优先省流量`）、运维防回环 IP 隔离、**可视化自定义规则箱**（免写 YAML 自动校验去重）；
+  - 常用配方可存为本机预设方案，后续换订阅/换密钥 **2 秒一键重出**。
+- **4 重防出错护栏**：Go RE2 禁前瞻强校验、空池多层保底、发他人前隐私防误发预警、全套防定位泄露与防国内 STUN 反射规则。
 
-### 3. 全节点用户归属矩阵 & 协议级精准分享链接
-- 一眼查看所有 VPS 与 NAT 各自归属哪些使用用户，支持跨机按人/协议/端口检索、原地改名改密与暂停/恢复。
-- **严格对齐客户端规范的分享导出**：
-  - 自动按协议生成标准链接：`vless://...`、`socks://<RawBase64(UTF8(u:p))>@host:port#remark`、`http://...`、`ss://<RawURLBase64(m:p)>@host:port#remark`（完美兼容中文备注与密码，避免 `=` 填充转义污染）。
-  - 一键生成带 `dialer-proxy` 的 **Mihomo / Clash 链式落地 YAML** 片段，并在「⚙️ 导出配置」中纯离线按成员生成 **Bettbox 万能覆写 `.js`**、**全平台双 Provider `.yaml`（iOS + Bettbox 通用）** 及 **云端 `nat-landing.yaml` 片段**。
+### 3. 混合架构全纳管 + `sing-box` 多协议 CRUD + 离线二维码
+- **主 VPS (`systemd`) + Alpine LXC NAT (`OpenRC`)**：NAT 端零 Python 依赖、128 MB 小内存友好、单次 SSH 合并查询提速 50%。
+- **4 协议统一管理**：VLESS + Reality、Shadowsocks-2022、SOCKS5、HTTP、Mixed 一键增删改，每次修改自动滚动备份 + `sing-box check` 校验失败秒级回滚。
+- **纯离线二维码**：内置零依赖 ISO/IEC 18004 QR 编码器（支持 V1–V16 / 中文 UTF-8 / 长 VLESS+Reality 链接），不请求任何外部二维码接口。
 
-### 4. `127.0.0.1` 零暴露成员流量与防外泄审计
-- 一键为主 VPS 或任意 Alpine NAT 开启本地 Clash API 统计口（仅监听 `127.0.0.1` + 随机 32 位 Bearer Secret），按用户实时追踪活跃连接、上传/下载流量与来源前置 IP。
-- 同一用户并发出现 `≥ 3` 个不同 `/24` 网段自动标红预警，智能识别同网段双 IP 负载均衡，支持单条或一键掐断连接。
+### 4. `127.0.0.1` 零暴露成员审计、多账号隔离沙箱与外观 DIY
+- 成员实时流量与多 `/24` 网段异常共享标红预警，统计接口严锁 `127.0.0.1` + 32 位随机密钥。
+- 多账号 WebView2 Profile 级物理隔离不串号，支持免订阅仪表盘识别流量 + 可选手动单次订阅查流。
+- **全局外观 DIY & 效率快捷键**：6 套精选强调色（浅/深双主题自适应）、舒适/紧凑全局密度、Mihomo 辅助卡片显隐开关、`Ctrl+K` 全局命令面板、`Ctrl+R` 刷新、日志语义高亮与导出。
 
-### 5. 多账号物理沙箱隔离 + 双模按需流量查流
-- **WebView2 Profile 级物理隔离**：为每个 `profileId` 分配独立 Cookie / LocalStorage 目录，同一服务商网站同时登录主号/副号永不串号。
-- **双模按需查流（绝不后台静默轮询）**：
-  1. **🪞 仪表盘页面识别（免订阅链接）**：直接从你已登录的独立窗口仪表盘中通过 WebView2 `eval_with_callback` 读取已用/总流量与到期日，彻底告别泄露订阅链接风险。
-  2. **↻ 订阅查流（可选手动单次）**：若希望通过订阅头查流，可在编辑卡片中选填订阅链接，仅在你手动点击按钮时单次拉取 `subscription-userinfo`（直连失败自动回退本机 Mihomo 代理端口）。
+---
 
-### 6. 本机 Mihomo / Clash API 联动
-- 兼容 **Clash Verge Rev / FlClash / Mihomo Meta** 等全部支持 Clash External Controller API（仅限 `127.0.0.1` / `localhost`）的本机客户端。
-- 支持**基于 `dialer-proxy` 的零硬编码链式拓扑自动识别**与底跳节点递归穿透展示、策略组智能置顶、实时连接排查与 AI 平台并发连通性测速。
-- 附带跨机场通用规则覆写参考模板：[mihomo-universal-override.example.js](./docs/mihomo-universal-override.example.js)（MetaCubeX `.mrs` 规则集 + 服务器 SSH 运维防回环分组）。
+## 📦 新人 3 分钟上手
+
+### 方式一：下载 GitHub Actions 官方公开构建版（推荐）
+1. 前往本仓库 [Releases](../../releases) 下载最新 `NodeDeck-windows-x64.exe`（或 `NodeDeck-windows-x64-portable.zip`）与同版本 `SHA256SUMS.txt`。
+2. 核对 SHA-256 哈希值（见下方校验步骤），确认完全一致后直接双击运行（绿色免安装）。
+3. 首次打开推荐操作路径：
+   - **想先逛逛**：点左下角 **「🎭 演示模式」**，零配置完整体验；
+   - **想管本机代理**：点左侧 **「💻 本机 Mihomo」**，填入本机控制地址（默认 `http://127.0.0.1:9090`）和密钥即可；
+   - **想管 VPS / NAT**：点 **「⚙️ 本机与节点配置」** 填 IP 后点 **「🔑 一键配置 SSH 免密向导」**，或在 **「💳 续费与多账号」** 中新增 NAT 与服务商卡片（配置结构可参考 [`config.example.json`](./config.example.json)）。
+
+### 方式二：自己从源码编译（100% 自主掌控）
+前置要求：[Rust Stable](https://rustup.rs/)（含 MSVC）、Node.js 22+（仅用于运行校验脚本）、Windows 10/11 内置 WebView2 与 OpenSSH。
+
+```powershell
+# 1. 克隆仓库
+git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
+cd NodeDeck
+
+# 2. 运行全链路自动化质量与隐私门禁（18 项检测）
+node scripts/verify-all.mjs
+
+# 3. 执行 Rust 单元测试、严格 Clippy 检查与 Release 编译
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo build --manifest-path src-tauri/Cargo.toml --release
+```
+
+编译产物位于 `src-tauri/target/release/NodeDeck.exe`（约 6 MB）。
+
+---
+
+## 🔐 公开 SHA-256 哈希校验（可复现可验证）
+
+为保证你拿到的程序与仓库公开源码 100% 一致、未被任何中间环节篡改：
+
+1. **二进制安装包校验（以 GitHub Actions 自动产出为准）**：  
+   每次发布 tag 时，GitHub Actions 会在纯净的公开 `windows-latest` 环境从零编译，并自动在 [Releases](../../releases) 正文与附件 **`SHA256SUMS.txt`** 中公布 `NodeDeck-windows-x64.exe` 和 `NodeDeck-windows-x64-portable.zip` 的真实 SHA-256 哈希。下载后在 PowerShell 执行：
+   ```powershell
+   Get-FileHash .\NodeDeck-windows-x64.exe -Algorithm SHA256
+   ```
+   将输出与对应 Release 页面的 `SHA256SUMS.txt` 逐位比对即可。
+
+2. **关键安全模块与核心脚本源码哈希（已公开在仓库根目录）**：  
+   见 **[`SHA256SUMS-source.txt`](./SHA256SUMS-source.txt)**，覆盖远端采集脚本（`remote_agent.py` / `remote_agent_alpine.sh`）、Rust 核心通信模块（`ssh_client.rs` / `mihomo.rs` / `config.rs` / `accounts.rs`）、离线配置与二维码生成器（`client-export.js` / `qrcode.js`）以及自动化门禁脚本（`privacy-check.mjs` / `verify-all.mjs`）。本地克隆后可直接核验：
+   ```powershell
+   Get-Content .\SHA256SUMS-source.txt | Where-Object { $_ -and $_ -notlike '#*' } | ForEach-Object {
+     $expected, $file = $_ -split '\s+', 2
+     $actual = (Get-FileHash $file.Trim() -Algorithm SHA256).Hash.ToLower()
+     "{0}  {1}" -f ($(if ($actual -eq $expected.ToLower()) { 'OK  ' } else { 'FAIL' }), $file.Trim())
+   }
+   ```
 
 ---
 
@@ -87,55 +166,13 @@
 
 ```mermaid
 flowchart LR
-    UI["NodeDeck 桌面界面 (Apple HIG + Demo Mode)"] -->|Tauri IPC| CORE["Rust 核心后端 (tokio / reqwest / WebView2)"]
-    CORE -->|持久化 SSH 公钥直连| VPS["主 VPS (Ubuntu/Debian · systemd · sing-box)"]
-    CORE -->|零 Python POSIX SSH + TCP 探活| NAT["Alpine LXC NAT 节点 (OpenRC · sing-box · 宿主机多出口)"]
-    CORE -->|仅 127.0.0.1 Loopback| MIHOMO["本机 Mihomo / Clash API"]
-    CORE -->|独立 WebView2 Profile 目录| SANDBOX["多账号隔离窗口 & 仪表盘识别"]
-    CORE -->|本地读写| CFG["本地 config.json (已 Git 忽略)"]
+    UI["NodeDeck 桌面界面 (Apple HIG · 6色主题 · Demo Mode)"] -->|Tauri IPC| CORE["Rust 核心后端 (tokio / reqwest / WebView2)"]
+    CORE -->|原生 OpenSSH 公钥直连| VPS["主 VPS (Ubuntu/Debian · systemd · sing-box)"]
+    CORE -->|1-SSH 无 Python POSIX 脚本| NAT["Alpine LXC NAT (OpenRC · sing-box · 多出口)"]
+    CORE -->|严锁 127.0.0.1 Loopback| MIHOMO["本机 Mihomo / Clash API (Zashboard 级 DIY)"]
+    CORE -->|独立 WebView2 Profile| SANDBOX["多账号隔离沙箱 & 仪表盘识别"]
+    CORE -->|100% 本地离线落盘| LOCAL["本地 config.json & exports/ (零云端上传)"]
 ```
-
----
-
-## 📦 快速上手
-
-### 方式一：下载预编译绿色版（推荐）
-前往本仓库 [Releases](../../releases) 下载最新 `NodeDeck-windows-x64.zip`，解压后直接双击 `NodeDeck.exe` 即可运行（无需安装，配置文件自动生成在同目录 `config.json`）。
-
-### 方式二：从源码编译（Windows 10 / 11）
-
-**前置要求：**
-- [Rust Stable 工具链](https://rustup.rs/)（含 MSVC 构建工具）
-- Windows 10 / 11 内置 WebView2 Runtime 与 OpenSSH 客户端 (`ssh.exe`)
-
-```powershell
-# 1. 克隆仓库
-git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
-cd NodeDeck
-
-# 2. 运行开源隐私防泄漏自检（可选）
-node scripts/privacy-check.mjs
-
-# 3. 执行严格代码检查与 Release 编译（输出单文件绿色版 NodeDeck.exe）
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo build --manifest-path src-tauri/Cargo.toml --release
-```
-
-编译产物位于：`src-tauri/target/release/NodeDeck.exe`（约 6 MB）。
-
-### 首次运行配置指引
-1. 启动 `NodeDeck.exe` 后，首次运行为空白引导态（也可点左侧 **「🎭 演示模式」** 先体验完整功能）。
-2. **引入主 VPS**：进入 **「⚙️ 本机与节点配置」**，填入你的主 VPS IP、SSH 端口、用户名与私钥路径（可点「🔑 一键配置 SSH 免密向导」自动生成并上传 Ed25519 公钥），点击保存即可连接。
-3. **引入 NAT 与多账号**：进入 **「💳 续费与多账号」**，点「＋ 新增 NAT」引入你的 Alpine/LXC NAT 实例（填写公网 IP、服务端口与可选 SSH 映射端口），点「＋ 新增账号」添加任意服务商续费与独立沙箱卡片。
-4. 完整配置结构参考仓库根目录的 [`config.example.json`](./config.example.json)。
-
----
-
-## 🛡️ 隐私与安全设计
-
-- **数据纯本地化**：`config.json` 与 WebView2 沙箱目录默认存放在本地程序数据路径，已在 `.gitignore` 严格忽略，绝不上传任何云端服务器。
-- **绝不保存明文密码**：SSH 仅使用本地公钥免密认证；服务商多账号仅通过原生 WebView2 独立 Profile 维持官方登录 Cookie，面板本身不读取也不存储你的任何登录密码。
-- **自动化防泄漏门禁**：内置 [`scripts/privacy-check.mjs`](./scripts/privacy-check.mjs)，已在 GitHub Actions CI 中强制拦截个人配置与私钥特征。
 
 ---
 
@@ -143,7 +180,7 @@ cargo build --manifest-path src-tauri/Cargo.toml --release
 
 欢迎提交 Issue 与 Pull Request，贡献规范请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
-> **免责声明**：本项目仅用于个人合法合规的 Linux 服务器运维、网络连通性诊断、多节点资产台账管理与技术学习研究，请严格遵守所在国家与地区的法律法规。
+> **免责声明**：本项目仅用于个人合法合规的 Linux 服务器运维、本机网络工具可视化管理、连通性诊断与多节点资产台账记录，请严格遵守所在国家与地区的法律法规。
 
 ## 📄 开源协议
 

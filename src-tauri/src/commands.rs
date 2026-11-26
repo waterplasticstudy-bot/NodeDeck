@@ -4,15 +4,15 @@ use crate::accounts::{
     clear_isolated_session, fetch_subscription_snapshot, has_isolated_session,
     open_isolated_window, scrape_window_traffic, tcp_ping, ScrapeOutcome,
 };
-use crate::alpine_ssh::{
+use crate::alpine::{
     close_alpine_conn, configure_alpine_audit, fetch_alpine_audit, fetch_alpine_config,
-    fetch_alpine_logs, fetch_alpine_overview, fetch_nat_exit_latency, fetch_nat_exit_status,
-    mutate_alpine_inbound, restore_alpine_backup, run_alpine_service_action,
+    fetch_alpine_config_fast, fetch_alpine_logs, fetch_alpine_overview, fetch_nat_exit_latency,
+    fetch_nat_exit_status, mutate_alpine_inbound, restore_alpine_backup, run_alpine_service_action,
     run_nat_exit_diagnostics, switch_nat_exit, InboundMutateInput,
 };
 use crate::config::{
-    build_vless_link, load_config, resolve_key_path, resolve_panel_dir, save_config, AppConfig,
-    NatNodeConfig, ProviderAccountConfig,
+    build_vless_link, load_config, resolve_key_path, resolve_panel_dir, update_config, AppConfig,
+    ExportPresetConfig, NatNodeConfig, ProviderAccountConfig,
 };
 use crate::constants::{
     DEFAULT_MIHOMO_MIXED_PORT, DEFAULT_SNI, INBOUND_TAG_PATTERN, MAIN_WINDOW_LABEL,
@@ -24,10 +24,14 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager, State, Theme};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+static MEMBER_NAME_RE: OnceLock<Regex> = OnceLock::new();
+static INBOUND_TAG_RE: OnceLock<Regex> = OnceLock::new();
 
 pub struct NetSample {
     pub iface: String,
@@ -60,6 +64,7 @@ fn bad_request(msg: impl Into<String>) -> SshError {
 #[serde(rename_all = "camelCase")]
 pub struct PartialConfigInput {
     pub name: Option<String>,
+    pub region: Option<String>,
     pub host: Option<String>,
     pub ssh_port: Option<u16>,
     pub user: Option<String>,
@@ -92,68 +97,58 @@ pub async fn save_config_cmd(
     input: PartialConfigInput,
     state: State<'_, AppState>,
 ) -> Result<Value, SshError> {
-    let current = load_config();
-    let ssh_changed = input.host.as_ref().is_some_and(|h| h.trim() != current.host)
-        || input.ssh_port.is_some_and(|p| p != current.ssh_port)
-        || input.user.as_ref().is_some_and(|u| u.trim() != current.user)
-        || input
-            .key_path
-            .as_ref()
-            .is_some_and(|k| k.trim() != current.key_path);
+    let mut ssh_changed = false;
+    let saved = update_config(|current| {
+        ssh_changed = input.host.as_ref().is_some_and(|h| h.trim() != current.host)
+            || input.ssh_port.is_some_and(|p| p != current.ssh_port)
+            || input.user.as_ref().is_some_and(|u| u.trim() != current.user)
+            || input
+                .key_path
+                .as_ref()
+                .is_some_and(|k| k.trim() != current.key_path);
 
-    let next = AppConfig {
-        name: input
-            .name
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.name),
-        host: input
-            .host
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.host),
-        ssh_port: input.ssh_port.filter(|&p| p > 0).unwrap_or(current.ssh_port),
-        user: input
-            .user
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.user),
-        key_path: input
-            .key_path
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.key_path),
-        reality_public_key: input
-            .reality_public_key
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.reality_public_key),
-        monthly_quota_gb: input
-            .monthly_quota_gb
-            .filter(|&q| q > 0)
-            .unwrap_or(current.monthly_quota_gb),
-        clash_api_port: input
-            .clash_api_port
-            .filter(|&p| p > 1024)
-            .unwrap_or(current.clash_api_port),
-        mihomo_api_url: input
-            .mihomo_api_url
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.mihomo_api_url),
-        mihomo_secret: input
-            .mihomo_secret
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.mihomo_secret),
-        dialer_proxy: input
-            .dialer_proxy
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or(current.dialer_proxy),
-        close_to_tray: input.close_to_tray.unwrap_or(current.close_to_tray),
-        nat_nodes: current.nat_nodes,
-        provider_accounts: current.provider_accounts,
-    };
+        if let Some(v) = input.name.filter(|s| !s.trim().is_empty()) {
+            current.name = v.trim().to_string();
+        }
+        if let Some(v) = input.region.filter(|s| !s.trim().is_empty()) {
+            current.region = v.trim().to_ascii_uppercase();
+        }
+        if let Some(v) = input.host {
+            current.host = v.trim().to_string();
+        }
+        if let Some(p) = input.ssh_port.filter(|&p| p > 0) {
+            current.ssh_port = p;
+        }
+        if let Some(v) = input.user.filter(|s| !s.trim().is_empty()) {
+            current.user = v.trim().to_string();
+        }
+        if let Some(v) = input.key_path.filter(|s| !s.trim().is_empty()) {
+            current.key_path = v.trim().to_string();
+        }
+        if let Some(v) = input.reality_public_key {
+            current.reality_public_key = v.trim().to_string();
+        }
+        if let Some(q) = input.monthly_quota_gb.filter(|&q| q > 0) {
+            current.monthly_quota_gb = q;
+        }
+        if let Some(p) = input.clash_api_port.filter(|&p| p >= 1024) {
+            current.clash_api_port = p;
+        }
+        if let Some(v) = input.mihomo_api_url.filter(|s| !s.trim().is_empty()) {
+            current.mihomo_api_url = v.trim().to_string();
+        }
+        if let Some(v) = input.mihomo_secret {
+            current.mihomo_secret = v.trim().to_string();
+        }
+        if let Some(v) = input.dialer_proxy.filter(|s| !s.trim().is_empty()) {
+            current.dialer_proxy = v.trim().to_string();
+        }
+        if let Some(v) = input.close_to_tray {
+            current.close_to_tray = v;
+        }
+    })
+    .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
 
-    let saved = save_config(&next).map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
     if ssh_changed {
         *state.prev_net.lock().await = None;
         state.ssh.reset().await;
@@ -163,18 +158,23 @@ pub async fn save_config_cmd(
 
 #[tauri::command]
 pub fn save_nat_nodes(nodes: Vec<NatNodeConfig>) -> Result<Value, SshError> {
-    let mut cfg = load_config();
-    cfg.nat_nodes = nodes;
-    let saved = save_config(&cfg).map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    let saved = update_config(|cfg| cfg.nat_nodes = nodes)
+        .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
     Ok(json!({ "ok": true, "natNodes": saved.nat_nodes }))
 }
 
 #[tauri::command]
 pub fn save_provider_accounts(accounts: Vec<ProviderAccountConfig>) -> Result<Value, SshError> {
-    let mut cfg = load_config();
-    cfg.provider_accounts = accounts;
-    let saved = save_config(&cfg).map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    let saved = update_config(|cfg| cfg.provider_accounts = accounts)
+        .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
     Ok(json!({ "ok": true, "providerAccounts": saved.provider_accounts }))
+}
+
+#[tauri::command]
+pub fn save_export_presets(presets: Vec<ExportPresetConfig>) -> Result<Value, SshError> {
+    let saved = update_config(|cfg| cfg.export_presets = presets)
+        .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    Ok(json!({ "ok": true, "exportPresets": saved.export_presets }))
 }
 
 #[tauri::command]
@@ -283,7 +283,8 @@ pub async fn add_user(
     state: State<'_, AppState>,
 ) -> Result<Value, SshError> {
     let trimmed = name.trim();
-    let name_re = Regex::new(MEMBER_NAME_PATTERN).expect("valid member regex");
+    let name_re = MEMBER_NAME_RE
+        .get_or_init(|| Regex::new(MEMBER_NAME_PATTERN).expect("valid member regex"));
     if !name_re.is_match(trimmed) {
         return Err(bad_request("成员名称仅支持 1-24 位中英文、数字、下划线或短横线"));
     }
@@ -314,7 +315,8 @@ pub async fn edit_vps_user(
     state: State<'_, AppState>,
 ) -> Result<Value, SshError> {
     let trimmed = name.trim();
-    let name_re = Regex::new(MEMBER_NAME_PATTERN).expect("valid member regex");
+    let name_re = MEMBER_NAME_RE
+        .get_or_init(|| Regex::new(MEMBER_NAME_PATTERN).expect("valid member regex"));
     if !name_re.is_match(trimmed) {
         return Err(bad_request("成员名称仅支持 1-24 位中英文、数字、下划线或短横线"));
     }
@@ -516,7 +518,8 @@ pub async fn mutate_node_inbound(
     if node_id == "vps_main" {
         if matches!(payload.op.as_str(), "add" | "edit") {
             if let Some(ref tag) = payload.tag {
-                let tag_re = Regex::new(INBOUND_TAG_PATTERN).expect("valid inbound tag regex");
+                let tag_re = INBOUND_TAG_RE
+                    .get_or_init(|| Regex::new(INBOUND_TAG_PATTERN).expect("valid inbound tag regex"));
                 if !tag_re.is_match(tag.trim()) {
                     return Err(bad_request(
                         "节点标识仅支持 2-32 位英文字母、数字、下划线或短横线",
@@ -546,14 +549,15 @@ pub async fn mutate_node_inbound(
         return Ok(res);
     }
 
-    let mut cfg = load_config();
+    let cfg = load_config();
     let node = find_nat_node(&cfg, &node_id)?;
     let (res, derived_pbk) = mutate_alpine_inbound(&node, &cfg.key_path, &payload).await?;
     if let Some(pbk) = derived_pbk {
-        if let Some(target) = cfg.nat_nodes.iter_mut().find(|n| n.id == node_id) {
-            target.reality_public_key = pbk;
-            let _ = save_config(&cfg);
-        }
+        let _ = update_config(|c| {
+            if let Some(target) = c.nat_nodes.iter_mut().find(|n| n.id == node_id) {
+                target.reality_public_key = pbk;
+            }
+        });
     }
     Ok(res)
 }
@@ -561,10 +565,18 @@ pub async fn mutate_node_inbound(
 #[tauri::command]
 pub async fn get_all_nodes_users(state: State<'_, AppState>) -> Result<Value, SshError> {
     let cfg = load_config();
-    let mut nodes = Vec::new();
+    let vps_region = if cfg.region.trim().is_empty() {
+        "US".to_string()
+    } else {
+        cfg.region.trim().to_string()
+    };
 
-    if !cfg.host.trim().is_empty() {
-        let vps_item = match state
+    // 主 VPS 与全部 NAT 节点完全并发拉取，且 NAT 使用轻量单次 SSH (跳过备份清单)
+    let vps_fut = async {
+        if cfg.host.trim().is_empty() {
+            return None;
+        }
+        let item = match state
             .ssh
             .call("sb_config", json!({}), SSH_DEFAULT_CALL_TIMEOUT_MS)
             .await
@@ -573,7 +585,7 @@ pub async fn get_all_nodes_users(state: State<'_, AppState>) -> Result<Value, Ss
                 "nodeId": "vps_main",
                 "nodeKind": "vps",
                 "name": cfg.name,
-                "region": "US",
+                "region": vps_region,
                 "host": cfg.host,
                 "publicKey": cfg.reality_public_key,
                 "ok": true,
@@ -583,63 +595,73 @@ pub async fn get_all_nodes_users(state: State<'_, AppState>) -> Result<Value, Ss
                 "nodeId": "vps_main",
                 "nodeKind": "vps",
                 "name": cfg.name,
-                "region": "US",
+                "region": vps_region,
                 "host": cfg.host,
                 "ok": false,
                 "error": err.error,
                 "inbounds": []
             }),
         };
-        nodes.push(vps_item);
-    }
+        Some(item)
+    };
 
-    let mut nat_handles = Vec::with_capacity(cfg.nat_nodes.len());
-    for nat in cfg.nat_nodes.clone() {
-        let fallback_key = cfg.key_path.clone();
-        nat_handles.push(tokio::spawn(async move {
-            if nat.ssh_port == 0 || nat.public_ip.trim().is_empty() {
-                return json!({
-                    "nodeId": nat.id,
-                    "nodeKind": "nat",
-                    "name": nat.name,
-                    "region": nat.region,
-                    "host": nat.public_ip,
-                    "publicKey": nat.reality_public_key,
-                    "ok": false,
-                    "error": "未配置 SSH 映射端口",
-                    "inbounds": []
-                });
-            }
-            match fetch_alpine_config(&nat, &fallback_key).await {
-                Ok(data) => json!({
-                    "nodeId": nat.id,
-                    "nodeKind": "nat",
-                    "name": nat.name,
-                    "region": nat.region,
-                    "host": nat.public_ip,
-                    "publicKey": nat.reality_public_key,
-                    "ok": true,
-                    "inbounds": data.get("inbounds").cloned().unwrap_or_else(|| json!([]))
-                }),
-                Err(err) => json!({
-                    "nodeId": nat.id,
-                    "nodeKind": "nat",
-                    "name": nat.name,
-                    "region": nat.region,
-                    "host": nat.public_ip,
-                    "ok": false,
-                    "error": err.error,
-                    "inbounds": []
-                }),
-            }
-        }));
-    }
-
-    for h in nat_handles {
-        if let Ok(item) = h.await {
-            nodes.push(item);
+    let nats_fut = async {
+        let mut nat_handles = Vec::with_capacity(cfg.nat_nodes.len());
+        for nat in cfg.nat_nodes.clone() {
+            let fallback_key = cfg.key_path.clone();
+            nat_handles.push(tokio::spawn(async move {
+                if nat.ssh_port == 0 || nat.public_ip.trim().is_empty() {
+                    return json!({
+                        "nodeId": nat.id,
+                        "nodeKind": "nat",
+                        "name": nat.name,
+                        "region": nat.region,
+                        "host": nat.public_ip,
+                        "publicKey": nat.reality_public_key,
+                        "ok": false,
+                        "error": "未配置 SSH 映射端口",
+                        "inbounds": []
+                    });
+                }
+                match fetch_alpine_config_fast(&nat, &fallback_key).await {
+                    Ok(data) => json!({
+                        "nodeId": nat.id,
+                        "nodeKind": "nat",
+                        "name": nat.name,
+                        "region": nat.region,
+                        "host": nat.public_ip,
+                        "publicKey": nat.reality_public_key,
+                        "ok": true,
+                        "inbounds": data.get("inbounds").cloned().unwrap_or_else(|| json!([]))
+                    }),
+                    Err(err) => json!({
+                        "nodeId": nat.id,
+                        "nodeKind": "nat",
+                        "name": nat.name,
+                        "region": nat.region,
+                        "host": nat.public_ip,
+                        "ok": false,
+                        "error": err.error,
+                        "inbounds": []
+                    }),
+                }
+            }));
         }
+        let mut list = Vec::with_capacity(nat_handles.len());
+        for h in nat_handles {
+            if let Ok(item) = h.await {
+                list.push(item);
+            }
+        }
+        list
+    };
+
+    let (vps_opt, nat_items) = tokio::join!(vps_fut, nats_fut);
+    let mut nodes = Vec::with_capacity(nat_items.len() + 1);
+    if let Some(v) = vps_opt {
+        nodes.push(v);
     }
+    nodes.extend(nat_items);
 
     Ok(json!({ "ok": true, "nodes": nodes }))
 }
@@ -707,14 +729,15 @@ pub async fn close_nat_alpine_conn(node_id: String, id: String) -> Result<Value,
 
 #[tauri::command]
 pub async fn get_nat_exit_status(node_id: String) -> Result<Value, SshError> {
-    let mut cfg = load_config();
+    let cfg = load_config();
     let node = find_nat_node(&cfg, &node_id)?;
     let (data, snapshot) = fetch_nat_exit_status(&node, &cfg.key_path).await?;
     if let Some(snap) = snapshot {
-        if let Some(target) = cfg.nat_nodes.iter_mut().find(|n| n.id == node_id) {
-            target.traffic_snapshot = Some(snap);
-            let _ = save_config(&cfg);
-        }
+        let _ = update_config(|c| {
+            if let Some(target) = c.nat_nodes.iter_mut().find(|n| n.id == node_id) {
+                target.traffic_snapshot = Some(snap);
+            }
+        });
     }
     Ok(data)
 }
@@ -728,14 +751,15 @@ pub async fn get_nat_exit_latency(node_id: String) -> Result<Value, SshError> {
 
 #[tauri::command]
 pub async fn switch_nat_exit_cmd(node_id: String, exit_code: String) -> Result<Value, SshError> {
-    let mut cfg = load_config();
+    let cfg = load_config();
     let node = find_nat_node(&cfg, &node_id)?;
     let (data, snapshot) = switch_nat_exit(&node, &cfg.key_path, &exit_code).await?;
     if let Some(snap) = snapshot {
-        if let Some(target) = cfg.nat_nodes.iter_mut().find(|n| n.id == node_id) {
-            target.traffic_snapshot = Some(snap);
-            let _ = save_config(&cfg);
-        }
+        let _ = update_config(|c| {
+            if let Some(target) = c.nat_nodes.iter_mut().find(|n| n.id == node_id) {
+                target.traffic_snapshot = Some(snap);
+            }
+        });
     }
     Ok(data)
 }
@@ -779,7 +803,7 @@ pub async fn sync_dashboard_traffic(
     target_id: String,
     app: AppHandle,
 ) -> Result<Value, SshError> {
-    let mut cfg = load_config();
+    let cfg = load_config();
     let (profile_id, title, url) = match target_kind.as_str() {
         "account" => {
             let acc = cfg
@@ -811,20 +835,23 @@ pub async fn sync_dashboard_traffic(
             "message": msg
         })),
         ScrapeOutcome::Captured(snap) => {
-            if target_kind == "account" {
-                if let Some(acc) = cfg.provider_accounts.iter_mut().find(|a| a.id == target_id) {
-                    if !snap.expires_at.is_empty() && acc.expires_at.is_empty() {
-                        acc.expires_at = snap.expires_at.clone();
+            let snap_clone = snap.clone();
+            let saved = update_config(|c| {
+                if target_kind == "account" {
+                    if let Some(acc) = c.provider_accounts.iter_mut().find(|a| a.id == target_id) {
+                        if !snap_clone.expires_at.is_empty() && acc.expires_at.is_empty() {
+                            acc.expires_at = snap_clone.expires_at.clone();
+                        }
+                        acc.traffic_snapshot = Some(snap_clone);
                     }
-                    acc.traffic_snapshot = Some(snap.clone());
+                } else if let Some(nat) = c.nat_nodes.iter_mut().find(|n| n.id == target_id) {
+                    if !snap_clone.expires_at.is_empty() && nat.expires_at.is_empty() {
+                        nat.expires_at = snap_clone.expires_at.clone();
+                    }
+                    nat.traffic_snapshot = Some(snap_clone);
                 }
-            } else if let Some(nat) = cfg.nat_nodes.iter_mut().find(|n| n.id == target_id) {
-                if !snap.expires_at.is_empty() && nat.expires_at.is_empty() {
-                    nat.expires_at = snap.expires_at.clone();
-                }
-                nat.traffic_snapshot = Some(snap.clone());
-            }
-            let saved = save_config(&cfg).map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+            })
+            .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
             Ok(json!({
                 "ok": true,
                 "needsWindowReady": false,
@@ -840,7 +867,7 @@ pub async fn sync_subscription_traffic(
     account_id: String,
     state: State<'_, AppState>,
 ) -> Result<Value, SshError> {
-    let mut cfg = load_config();
+    let cfg = load_config();
     let sub_url = cfg
         .provider_accounts
         .iter()
@@ -873,13 +900,16 @@ pub async fn sync_subscription_traffic(
         Err(err) => return Err(err),
     };
 
-    if let Some(acc) = cfg.provider_accounts.iter_mut().find(|a| a.id == account_id) {
-        if !snap.expires_at.is_empty() && acc.expires_at.is_empty() {
-            acc.expires_at = snap.expires_at.clone();
+    let snap_clone = snap.clone();
+    let saved = update_config(|c| {
+        if let Some(acc) = c.provider_accounts.iter_mut().find(|a| a.id == account_id) {
+            if !snap_clone.expires_at.is_empty() && acc.expires_at.is_empty() {
+                acc.expires_at = snap_clone.expires_at.clone();
+            }
+            acc.traffic_snapshot = Some(snap_clone);
         }
-        acc.traffic_snapshot = Some(snap.clone());
-    }
-    let saved = save_config(&cfg).map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    })
+    .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
     Ok(json!({
         "ok": true,
         "viaProxy": via_proxy,
@@ -936,12 +966,39 @@ pub async fn select_mihomo_node(
 #[tauri::command]
 pub async fn test_mihomo_delay(
     name: String,
+    test_url: Option<String>,
+    timeout_ms: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<Value, SshError> {
     let cfg = load_config();
     state
         .mihomo
-        .test_delay(&cfg, &name)
+        .test_delay(&cfg, &name, test_url.as_deref(), timeout_ms)
+        .await
+        .map_err(|e| SshError::new("MIHOMO_ERR", e, None))
+}
+
+#[tauri::command]
+pub async fn test_mihomo_group_delay(
+    group: String,
+    test_url: Option<String>,
+    timeout_ms: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    let cfg = load_config();
+    state
+        .mihomo
+        .test_group_delays(&cfg, &group, test_url.as_deref(), timeout_ms)
+        .await
+        .map_err(|e| SshError::new("MIHOMO_ERR", e, None))
+}
+
+#[tauri::command]
+pub async fn get_mihomo_rules(state: State<'_, AppState>) -> Result<Value, SshError> {
+    let cfg = load_config();
+    state
+        .mihomo
+        .get_rules(&cfg)
         .await
         .map_err(|e| SshError::new("MIHOMO_ERR", e, None))
 }
@@ -984,4 +1041,120 @@ pub fn open_external_url(url: String, app: AppHandle) -> Result<(), SshError> {
     app.opener()
         .open_url(trimmed, None::<&str>)
         .map_err(|e| SshError::new("OPENER_ERR", format!("打开系统浏览器失败: {e}"), None))
+}
+
+fn sanitize_export_filename(raw: &str) -> Result<String, SshError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return Err(bad_request("导出文件名非法，不允许包含路径分隔符或 .."));
+    }
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let lower = cleaned.to_ascii_lowercase();
+    if !(lower.ends_with(".yaml")
+        || lower.ends_with(".yml")
+        || lower.ends_with(".js")
+        || lower.ends_with(".txt"))
+    {
+        return Err(bad_request("仅允许导出 .yaml / .yml / .js / .txt 配置文件"));
+    }
+    Ok(cleaned)
+}
+
+fn strip_win_verbatim(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
+#[tauri::command]
+pub fn save_export_file(filename: String, content: String) -> Result<Value, SshError> {
+    if content.len() > 2 * 1024 * 1024 {
+        return Err(bad_request("配置文件体积超过 2 MB 上限"));
+    }
+    let safe_name = sanitize_export_filename(&filename)?;
+    let exports_dir = resolve_panel_dir().join("exports");
+    std::fs::create_dir_all(&exports_dir)
+        .map_err(|e| SshError::new("EXPORT_DIR_ERR", format!("创建 exports 目录失败: {e}"), None))?;
+    let target = exports_dir.join(&safe_name);
+    std::fs::write(&target, content.as_bytes())
+        .map_err(|e| SshError::new("EXPORT_WRITE_ERR", format!("写入配置文件失败: {e}"), None))?;
+    Ok(json!({
+        "ok": true,
+        "fileName": safe_name,
+        "filePath": strip_win_verbatim(&target),
+        "dirPath": strip_win_verbatim(&exports_dir),
+        "size": content.len()
+    }))
+}
+
+#[tauri::command]
+pub fn open_export_folder(file_path: Option<String>, app: AppHandle) -> Result<(), SshError> {
+    let exports_dir = resolve_panel_dir().join("exports");
+    std::fs::create_dir_all(&exports_dir)
+        .map_err(|e| SshError::new("EXPORT_DIR_ERR", format!("创建 exports 目录失败: {e}"), None))?;
+    let canon_dir = std::fs::canonicalize(&exports_dir).unwrap_or_else(|_| exports_dir.clone());
+    let clean_dir = strip_win_verbatim(&canon_dir);
+
+    if let Some(raw_file) = file_path {
+        let trimmed = raw_file.trim();
+        if !trimmed.is_empty() {
+            if let Ok(canon_file) = std::fs::canonicalize(trimmed) {
+                if canon_file.starts_with(&canon_dir) && canon_file.is_file() {
+                    let clean_file = strip_win_verbatim(&canon_file);
+                    #[cfg(target_os = "windows")]
+                    {
+                        std::process::Command::new("explorer.exe")
+                            .arg("/select,")
+                            .arg(&clean_file)
+                            .spawn()
+                            .map_err(|e| {
+                                SshError::new(
+                                    "OPENER_ERR",
+                                    format!("打开资源管理器失败: {e}"),
+                                    None,
+                                )
+                            })?;
+                        return Ok(());
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = clean_file;
+                    }
+                }
+            }
+        }
+    }
+
+    app.opener()
+        .open_path(&clean_dir, None::<&str>)
+        .map_err(|e| SshError::new("OPENER_ERR", format!("打开导出目录失败: {e}"), None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_export_filename_blocks_traversal_and_bad_ext() {
+        assert!(sanitize_export_filename("../evil.yaml").is_err());
+        assert!(sanitize_export_filename("sub/file.yaml").is_err());
+        assert!(sanitize_export_filename("script.exe").is_err());
+        assert_eq!(
+            sanitize_export_filename("my:node*cfg.yaml").unwrap(),
+            "my_node_cfg.yaml"
+        );
+        assert_eq!(sanitize_export_filename("logs.txt").unwrap(), "logs.txt");
+    }
 }

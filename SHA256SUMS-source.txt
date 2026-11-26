@@ -1,0 +1,17 @@
+# NodeDeck v1.2.0 Security-Critical Source & Agent SHA-256 Checksums
+# Generated directly from clean repository working tree before release tag v1.2.0
+# Note: Binary installers (NodeDeck-windows-x64.exe / .zip) checksums are published automatically
+# by GitHub Actions in each Release's SHA256SUMS.txt asset.
+
+48924fab8b5e1c2da076327b7df212d412038b8916c8a9766e9ab599177686e2  src-tauri/assets/remote_agent.py
+4a80bff0944ae46001643b4ba6659be9b58cf3c1249c812743f1a1e30e018f04  src-tauri/assets/remote_agent_alpine.sh
+8553e70d1aa3382be78628065c0b426cedd85681de3884741c26e412df908235  src-tauri/src/lib.rs
+5f1848ccdfbbc05ee63e9fa5275afb83188b6bf24ef7e85dfa5423219cbcd09b  src-tauri/src/commands.rs
+924d72079ae1dfe82558aea04e168b5649932c46da9eb3fb65d1dbfc206e6c4f  src-tauri/src/config.rs
+8160295e25105df0d3eb031a7a2fc7d36ae488c4b0cb4cc56a508aa831fe062d  src-tauri/src/mihomo.rs
+a99e469b967ad2991f799a238727348d105e36ce5cea32335268235e0eebecb2  src-tauri/src/ssh_client.rs
+e5def2845e301a0de792363956e8cde37cff01168498a2a5dcab24d1eb6a4191  src-tauri/src/accounts.rs
+71ed9af8468d40a46e163ab59c76224a7ff0052939055ac685c8aee04f5dda8b  src/utils/client-export.js
+5ce31fbff52a0418a495d290d8c0af6b242450231dbe3cc70e42d3841578c765  src/utils/qrcode.js
+35da49380412a8a77c838555e5ed98b65a0abbe4bf94996b158828497beb161d  scripts/privacy-check.mjs
+a85f523609aaa0fdd672683c9d1010476a5efddba3fb6ae4171310f4cb1745a6  scripts/verify-all.mjs

@@ -20,6 +20,7 @@ function createInitialDemoState() {
   return {
     config: {
       name: 'Demo US VPS · 洛杉矶',
+      region: 'US',
       host: '198.51.100.10',
       sshPort: 22,
       user: 'root',
@@ -31,6 +32,7 @@ function createInitialDemoState() {
       mihomoSecret: '',
       dialerProxy: 'Proxy',
       closeToTray: true,
+      exportPresets: [],
       natNodes: [
         {
           id: 'nat_demo_global',
@@ -299,6 +301,7 @@ function createInitialDemoState() {
             { name: '🇭🇰 HongKong IPLC 02', type: 'Shadowsocks', delay: 32 },
             { name: '🇸🇬 Singapore Direct 03', type: 'VLESS', delay: 68 },
             { name: '🇺🇸 LosAngeles CN2 04', type: 'VLESS', delay: 142 },
+            { name: '🇪🇺 Europe Standby 05', type: 'Trojan', delay: null },
           ],
         },
         {
@@ -730,7 +733,7 @@ export async function demoInvoke(cmd, args = {}) {
             nodeId: 'vps_main',
             nodeKind: 'vps',
             name: state.config.name,
-            region: 'US',
+            region: state.config.region || 'US',
             host: state.config.host,
             publicKey: state.config.realityPublicKey,
             ok: true,
@@ -945,8 +948,57 @@ export async function demoInvoke(cmd, args = {}) {
       return { ok: true, group: args.group, name: args.name };
     }
 
-    case 'test_mihomo_delay':
-      return { ok: true, name: args.name, delay: Math.round(jitter(64, 15)) };
+    case 'test_mihomo_delay': {
+      const testUrl = String(args.testUrl || 'https://www.gstatic.com/generate_204');
+      const timeoutMs = Math.max(1000, Number(args.timeoutMs) || 5000);
+      const base = testUrl.includes('cloudflare') ? 54 : 64;
+      const delay = Math.min(timeoutMs, Math.max(18, Math.round(jitter(base, 15))));
+      state.mihomo.groups.forEach((grp) => {
+        const hit = grp.nodes.find((n) => n.name === args.name);
+        if (hit) hit.delay = delay;
+      });
+      return { ok: true, name: args.name, delay, testUrl, timeoutMs };
+    }
+
+    case 'test_mihomo_group_delay': {
+      const testUrl = String(args.testUrl || 'https://www.gstatic.com/generate_204');
+      const timeoutMs = Math.max(1000, Number(args.timeoutMs) || 5000);
+      const grp = state.mihomo.groups.find((g) => g.name === args.group);
+      const delays = {};
+      if (grp) {
+        grp.nodes.forEach((n, idx) => {
+          const val = Math.min(timeoutMs, Math.max(18, Math.round(jitter(36 + idx * 24, 12))));
+          n.delay = val;
+          delays[n.name] = val;
+        });
+      }
+      return { ok: true, group: args.group, testedCount: Object.keys(delays).length, delays, testUrl, timeoutMs };
+    }
+
+    case 'get_mihomo_rules':
+      return {
+        ok: true,
+        totalRules: 8,
+        rules: [
+          { index: 1, type: 'IP-CIDR', payload: '198.51.100.10/32', proxy: 'DIRECT' },
+          { index: 2, type: 'IP-CIDR', payload: '203.0.113.0/24', proxy: 'DIRECT' },
+          { index: 3, type: 'DOMAIN-SUFFIX', payload: 'ads.example.net', proxy: 'REJECT' },
+          { index: 4, type: 'DOMAIN-SUFFIX', payload: 'googleapis.com', proxy: 'AI Services' },
+          { index: 5, type: 'DOMAIN-SUFFIX', payload: 'anthropic.com', proxy: 'AI Services' },
+          { index: 6, type: 'DOMAIN-SUFFIX', payload: 'github.com', proxy: 'Proxy' },
+          { index: 7, type: 'GEOIP', payload: 'CN', proxy: 'DIRECT' },
+          { index: 8, type: 'MATCH', payload: '', proxy: 'Fallback' },
+        ],
+        providers: [
+          { name: 'ai_domains', behavior: 'domain', format: 'mrs', ruleCount: 148, updatedAt: '2026-11-27T04:00:00Z' },
+          { name: 'cn_cidr', behavior: 'ipcidr', format: 'mrs', ruleCount: 4620, updatedAt: '2026-11-27T04:00:00Z' },
+          { name: 'reject_ads', behavior: 'domain', format: 'mrs', ruleCount: 32910, updatedAt: '2026-11-27T04:00:00Z' },
+        ],
+      };
+
+    case 'save_export_presets':
+      state.config.exportPresets = structuredClone(args.presets || []);
+      return { ok: true, exportPresets: structuredClone(state.config.exportPresets) };
 
     case 'close_mihomo_conn':
       state.mihomo.connections = args.id === '__ALL__'
@@ -954,6 +1006,18 @@ export async function demoInvoke(cmd, args = {}) {
         : state.mihomo.connections.filter((c) => c.id !== args.id);
       return { ok: true };
 
+    case 'save_export_file': {
+      const safe = String(args.filename || 'nodedeck-config.yaml');
+      return {
+        ok: true,
+        fileName: safe,
+        filePath: `D:\\NodeDeck-App\\exports\\${safe}`,
+        dirPath: 'D:\\NodeDeck-App\\exports',
+        size: String(args.content || '').length,
+      };
+    }
+
+    case 'open_export_folder':
     case 'set_window_theme':
     case 'open_external_url':
       return { ok: true };

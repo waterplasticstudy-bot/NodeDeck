@@ -79,9 +79,16 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     });
                 }
                 TRAY_MENU_QUIT => {
-                    let state = app.state::<AppState>();
-                    tauri::async_runtime::block_on(state.ssh.reset());
-                    app.exit(0);
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = handle.state::<AppState>();
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            state.ssh.reset(),
+                        )
+                        .await;
+                        handle.exit(0);
+                    });
                 }
                 _ => {}
             }

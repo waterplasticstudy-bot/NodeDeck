@@ -21,8 +21,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run Privacy & Sanitization Guard
-        run: node scripts/privacy-check.mjs
+      - name: Run Full Verification & Privacy Gate
+        run: node scripts/verify-all.mjs
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -34,25 +34,82 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - name: Run Rust Unit Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Run Clippy (-D warnings)
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Build Release Binary (Single .exe)
         run: cargo build --manifest-path src-tauri/Cargo.toml --release
 
-      - name: Package Portable Artifact
+      - name: Package Portable Artifact & Generate Public SHA-256 Checksums
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item src-tauri/target/release/NodeDeck.exe dist/NodeDeck-windows-x64.exe
           Copy-Item config.example.json dist/config.example.json
-          Compress-Archive -Path dist/* -DestinationPath NodeDeck-windows-x64-portable.zip -Force
+          Compress-Archive -Path dist/NodeDeck-windows-x64.exe, dist/config.example.json -DestinationPath NodeDeck-windows-x64-portable.zip -Force
+
+          $exeHash = (Get-FileHash dist/NodeDeck-windows-x64.exe -Algorithm SHA256).Hash.ToLower()
+          $zipHash = (Get-FileHash NodeDeck-windows-x64-portable.zip -Algorithm SHA256).Hash.ToLower()
+
+          $auditFiles = @(
+            'src-tauri/assets/remote_agent.py',
+            'src-tauri/assets/remote_agent_alpine.sh',
+            'src-tauri/src/ssh_client.rs',
+            'src-tauri/src/mihomo.rs',
+            'src-tauri/src/config.rs',
+            'src-tauri/src/accounts.rs',
+            'src/utils/client-export.js',
+            'src/utils/qrcode.js',
+            'scripts/privacy-check.mjs',
+            'scripts/verify-all.mjs'
+          )
+
+          $sumLines = @(
+            "# NodeDeck Release SHA-256 Checksums (Built cleanly by GitHub Actions)",
+            "$exeHash  NodeDeck-windows-x64.exe",
+            "$zipHash  NodeDeck-windows-x64-portable.zip"
+          )
+          foreach ($f in $auditFiles) {
+            if (Test-Path $f) {
+              $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+              $sumLines += "$h  $f"
+            }
+          }
+          $sumLines -join "`n" | Set-Content -Path SHA256SUMS.txt -Encoding UTF8
+
+          $notes = @"
+          ## 🔒 零遥测 · 纯本地运行承诺 / Zero-Telemetry & Local-Only
+
+          - **无服务端 / 无云端中转**：NodeDeck 不连接任何作者服务器，无统计埋点、无配置上传。
+          - **数据纯本地**：所有配置 (`config.json`)、离线导出的客户端配置 (`exports/`) 与多账号隔离沙箱 (`profiles/`) 均仅保存在你的电脑本地目录。
+          - **可复现公开构建**：下方二进制文件直接由 GitHub Actions 公开流水线从本仓库源码编译生成。
+
+          ## 🔐 SHA-256 文件完整性校验
+
+          | 文件 | SHA-256 |
+          | :--- | :--- |
+          | ``NodeDeck-windows-x64.exe`` | ``$exeHash`` |
+          | ``NodeDeck-windows-x64-portable.zip`` | ``$zipHash`` |
+
+          Windows PowerShell 一键校验下载文件：
+          ````powershell
+          Get-FileHash .\NodeDeck-windows-x64.exe -Algorithm SHA256
+          ````
+          完整源码与产物校验清单见附件 ``SHA256SUMS.txt``。
+          "@
+          $notes | Set-Content -Path release_notes.md -Encoding UTF8
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release_notes.md
           generate_release_notes: true
           files: |
             dist/NodeDeck-windows-x64.exe
             NodeDeck-windows-x64-portable.zip
+            SHA256SUMS.txt

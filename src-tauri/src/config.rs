@@ -9,7 +9,41 @@ use crate::constants::{
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use url::form_urlencoded;
+
+static CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn config_lock() -> &'static Mutex<()> {
+    CONFIG_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// 纯本地离线客户端配置导出方案预设（仅保存在本机 config.json，绝不上传；全部新字段默认向后兼容）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExportPresetConfig {
+    pub id: String,
+    pub name: String,
+    pub format: String,
+    pub device_preset: String,
+    pub node_keys: Vec<String>,
+    pub front_sub_url: String,
+    pub exclude_high_mult: bool,
+    pub prefer_apac: bool,
+    pub custom_exclude: String,
+    pub include_ops: bool,
+    pub filename: String,
+    pub exit_fallback_mode: String,
+    pub exit_fallback_regions: Vec<String>,
+    pub front_region_mode: String,
+    pub front_regions: Vec<String>,
+    pub default_outbound_mode: String,
+    pub include_all_managed_ips: bool,
+    pub test_url: String,
+    pub custom_exit_domains: String,
+    pub custom_direct_domains: String,
+    pub custom_reject_domains: String,
+}
 
 /// 仪表盘识别、宿主机原生计费或单次订阅头同步的本地持久化流量快照
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -131,6 +165,7 @@ impl Default for ProviderAccountConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     pub name: String,
+    pub region: String,
     pub host: String,
     pub ssh_port: u16,
     pub user: String,
@@ -149,12 +184,15 @@ pub struct AppConfig {
     pub nat_nodes: Vec<NatNodeConfig>,
     #[serde(default)]
     pub provider_accounts: Vec<ProviderAccountConfig>,
+    #[serde(default)]
+    pub export_presets: Vec<ExportPresetConfig>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             name: DEFAULT_SERVER_NAME.to_string(),
+            region: "US".to_string(),
             host: DEFAULT_HOST.to_string(),
             ssh_port: DEFAULT_SSH_PORT,
             user: DEFAULT_SSH_USER.to_string(),
@@ -168,6 +206,7 @@ impl Default for AppConfig {
             close_to_tray: true,
             nat_nodes: Vec::new(),
             provider_accounts: Vec::new(),
+            export_presets: Vec::new(),
         }
     }
 }
@@ -194,7 +233,7 @@ pub fn config_file_path() -> PathBuf {
     resolve_panel_dir().join(CONFIG_FILE_NAME)
 }
 
-pub fn load_config() -> AppConfig {
+fn load_config_unlocked() -> AppConfig {
     let path = config_file_path();
     match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str::<AppConfig>(&raw).unwrap_or_default(),
@@ -202,7 +241,7 @@ pub fn load_config() -> AppConfig {
     }
 }
 
-pub fn save_config(next: &AppConfig) -> Result<AppConfig, String> {
+fn save_config_unlocked(next: &AppConfig) -> Result<AppConfig, String> {
     let path = config_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -210,8 +249,31 @@ pub fn save_config(next: &AppConfig) -> Result<AppConfig, String> {
     let body = serde_json::to_string_pretty(next)
         .map_err(|e| format!("序列化配置失败: {e}"))?
         + "\n";
-    fs::write(&path, body).map_err(|e| format!("写入配置文件失败: {e}"))?;
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, body.as_bytes()).map_err(|e| format!("写入临时配置文件失败: {e}"))?;
+    if let Err(rename_err) = fs::rename(&tmp_path, &path) {
+        // Windows 极少数杀软占用瞬间回退覆盖写，并清理临时文件
+        fs::write(&path, body.as_bytes())
+            .map_err(|e| format!("写入配置文件失败: {e} (rename: {rename_err})"))?;
+        let _ = fs::remove_file(&tmp_path);
+    }
     Ok(next.clone())
+}
+
+pub fn load_config() -> AppConfig {
+    let _guard = config_lock().lock().unwrap_or_else(|e| e.into_inner());
+    load_config_unlocked()
+}
+
+/// 原子读-改-写配置事务（互斥锁 + 临时文件原子替换，消除并发覆盖与断电损坏风险）
+pub fn update_config<F>(mutator: F) -> Result<AppConfig, String>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    let _guard = config_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cfg = load_config_unlocked();
+    mutator(&mut cfg);
+    save_config_unlocked(&cfg)
 }
 
 /// 解析含 %USERPROFILE% 或 ~ 前缀的私钥路径
@@ -283,4 +345,19 @@ pub fn build_vless_link(
     );
     let tag: String = url::form_urlencoded::byte_serialize(label_raw.as_bytes()).collect();
     format!("vless://{uuid}@{}:{port}?{query}#{tag}", cfg.host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_preset_deserializes_legacy_v110_json() {
+        let raw = r#"{"id":"p1","name":"Legacy","format":"yaml","nodeKeys":["a"],"excludeHighMult":true}"#;
+        let parsed: ExportPresetConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.id, "p1");
+        assert!(parsed.exit_fallback_regions.is_empty());
+        assert_eq!(parsed.exit_fallback_mode, "");
+        assert!(!parsed.include_all_managed_ips);
+    }
 }

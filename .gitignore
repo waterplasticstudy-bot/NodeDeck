@@ -1,5 +1,6 @@
-# Personal runtime config & local secrets (NEVER commit)
+# Personal runtime config, exported configs & local secrets (NEVER commit)
 config.json
+exports/
 *.local.json
 *.key
 *.pem

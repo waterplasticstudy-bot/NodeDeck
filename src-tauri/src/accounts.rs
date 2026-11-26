@@ -12,7 +12,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::net::TcpStream;
@@ -20,9 +20,12 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 use url::Url;
 
+static PROFILE_ID_RE: OnceLock<Regex> = OnceLock::new();
+static DIRECT_SUB_CLIENT: OnceLock<Client> = OnceLock::new();
+
 fn validate_profile_id(raw: &str) -> Result<String, SshError> {
     let trimmed = raw.trim();
-    let re = Regex::new(PROFILE_ID_PATTERN).expect("valid profile regex");
+    let re = PROFILE_ID_RE.get_or_init(|| Regex::new(PROFILE_ID_PATTERN).expect("valid profile regex"));
     if !re.is_match(trimmed) {
         return Err(SshError::new(
             "VALIDATION_ERROR",
@@ -428,19 +431,26 @@ pub async fn fetch_subscription_snapshot(
     proxy_url: Option<&str>,
 ) -> Result<(TrafficSnapshot, bool), SshError> {
     let parsed = validate_http_url(sub_url)?;
-    let mut builder = Client::builder()
-        .user_agent(SUBSCRIPTION_USER_AGENT)
-        .timeout(Duration::from_millis(SUBSCRIPTION_FETCH_TIMEOUT_MS));
-
-    if let Some(p) = proxy_url {
+    let client = if let Some(p) = proxy_url {
         let proxy = reqwest::Proxy::all(p)
             .map_err(|e| SshError::new("HTTP_ERR", format!("初始化本机代理失败: {e}"), None))?;
-        builder = builder.proxy(proxy);
-    }
-
-    let client = builder
-        .build()
-        .map_err(|e| SshError::new("HTTP_ERR", format!("初始化请求失败: {e}"), None))?;
+        Client::builder()
+            .user_agent(SUBSCRIPTION_USER_AGENT)
+            .timeout(Duration::from_millis(SUBSCRIPTION_FETCH_TIMEOUT_MS))
+            .proxy(proxy)
+            .build()
+            .map_err(|e| SshError::new("HTTP_ERR", format!("初始化请求失败: {e}"), None))?
+    } else {
+        DIRECT_SUB_CLIENT
+            .get_or_init(|| {
+                Client::builder()
+                    .user_agent(SUBSCRIPTION_USER_AGENT)
+                    .timeout(Duration::from_millis(SUBSCRIPTION_FETCH_TIMEOUT_MS))
+                    .build()
+                    .expect("build shared subscription http client")
+            })
+            .clone()
+    };
 
     let resp = client
         .get(parsed)
