@@ -246,8 +246,13 @@ function main(config) {
     // 5. Fine-grained QUIC (UDP 443): allow CN/Apple/Microsoft, block overseas QUIC to prevent drops
     "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,private_domain),(RULE-SET,private_ip,no-resolve),(RULE-SET,cn_domain),(RULE-SET,cn_ip,no-resolve),(RULE-SET,apple_domain),(RULE-SET,microsoft_domain)))))),REJECT",
 
-    // 6. Core AI & Account Identity (strict landing exit)
+    // 6. Core AI, Leak-Check & Account Identity (strict landing exit)
     "DOMAIN-SUFFIX,ipinfo.io," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,browserleaks.com," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ipleak.net," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,whoer.net," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ip.net.coffee," + EXIT_GROUP,
+    "DOMAIN-SUFFIX,ip.sb," + EXIT_GROUP,
     "DOMAIN-SUFFIX,accounts.google.com," + EXIT_GROUP,
     "DOMAIN-SUFFIX,aicode.googleapis.com," + AI_GROUP,
     "DOMAIN-SUFFIX,generativelanguage.googleapis.com," + AI_GROUP,
@@ -273,19 +278,55 @@ function main(config) {
     "RULE-SET,telegram_domain," + SOCIAL_GROUP,
     "RULE-SET,telegram_ip," + SOCIAL_GROUP + ",no-resolve",
 
-    // 8. Apple, Microsoft, Domestic CN, Global Fallback
+    // 8. Apple, Microsoft, Overseas-before-CN (avoids ~149 unblocked overseas sites inside cn.mrs), Domestic CN, Fallback
     "RULE-SET,apple_domain,DIRECT",
     "RULE-SET,microsoft_domain,DIRECT",
-    "RULE-SET,cn_domain,DIRECT",
     "RULE-SET,proxy_domain," + FALLBACK_GROUP,
+    "RULE-SET,cn_domain,DIRECT",
     "RULE-SET,cn_ip,DIRECT",
     "MATCH," + FALLBACK_GROUP,
   ];
 
-  // 9. Clean encrypted DNS (never overwrites config.tun so desktop/mobile toggles stay independent)
+  // 9. Safe SNI sniffer (catches apps bypassing Fake-IP; skips Telegram IPs, Apple Push & managed servers)
+  config.sniffer = {
+    enable: true,
+    "force-dns-mapping": true,
+    "parse-pure-ip": true,
+    "override-destination": false,
+    sniff: {
+      HTTP: {
+        ports: [80, "8080-8880"],
+        "override-destination": true,
+      },
+      TLS: {
+        ports: [443, 8443],
+      },
+      QUIC: {
+        ports: [443, 8443],
+      },
+    },
+    "force-domain": ["+.v2ex.com"],
+    "skip-domain": ["Mijia Cloud", "+.push.apple.com"],
+    "skip-dst-address": unique([
+      ...USER_CONFIG.managedServerIps.filter(Boolean).map((ip) => `${ip}/32`),
+      "91.105.192.0/23",
+      "91.108.4.0/22",
+      "91.108.8.0/21",
+      "91.108.16.0/21",
+      "91.108.56.0/22",
+      "95.161.64.0/20",
+      "149.154.160.0/20",
+      "185.76.151.0/24",
+      "2001:67c:4e0::/44",
+      "2001:b28:f230::/44",
+      "2a0a:f280::/29",
+    ]),
+  };
+
+  // 10. Clean encrypted DNS (dns.ipv6=false avoids AAAA fallback stalls while letting dual-stack front hops stay usable)
   config.dns = {
     enable: true,
-    ipv6: true,
+    ipv6: false,
     "enhanced-mode": "fake-ip",
     "fake-ip-range": "198.18.0.1/16",
     "respect-rules": true,
@@ -294,7 +335,10 @@ function main(config) {
     "direct-nameserver": ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"],
     nameserver: ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"],
     "nameserver-policy": {
-      "rule-set:private_domain,cn_domain": ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"],
+      "rule-set:private_domain,apple_domain,microsoft_domain,cn_domain": [
+        "https://223.5.5.5/dns-query",
+        "https://1.12.12.12/dns-query",
+      ],
     },
     "fake-ip-filter": [
       "*.lan",
