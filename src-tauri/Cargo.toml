@@ -1,6 +1,6 @@
 [package]
 name = "nodedeck"
-version = "1.0.2"
+version = "1.0.3"
 description = "NodeDeck — Lightweight Rust + Tauri v2 desktop workbench for multi-node sing-box VPS/NAT management, Mihomo/Clash API control, and isolated multi-account renewal dashboards"
 authors = ["NodeDeck Contributors"]
 license = "MIT"

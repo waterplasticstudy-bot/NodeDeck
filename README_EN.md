@@ -55,7 +55,7 @@
    - Every edit creates a rolling backup (last 10 retained), runs `sing-box check`, and rolls back automatically on validation error.
 3. **Cross-Node User Ownership Matrix & Standards-Compliant Share Links**
    - Inspect, search, rename, reset credentials, pause/resume, or remove users across all VPS and NAT nodes from one unified view.
-   - Generates protocol-exact share links (`vless://`, unpadded UTF-8 Base64 `socks://` & `http://`, SIP002 RawURL Base64 `ss://`) and chained **Mihomo / Clash YAML** snippets (`dialer-proxy`).
+   - Generates protocol-exact share links (`vless://`, unpadded UTF-8 Base64 `socks://` & `http://`, SIP002 RawURL Base64 `ss://`), chained **Mihomo / Clash YAML** snippets (`dialer-proxy`), and offline per-member client exports (**Bettbox v4.3 `.js`**, **all-platform dual-provider `.yaml`** for iOS + Bettbox, and **cloud landing snippets**).
 4. **Loopback-Only Live Traffic & Anti-Sharing Audit**
    - Enable `127.0.0.1` Clash API monitoring per node to inspect live connections, per-user bandwidth, and multi-`/24` subnet concurrency alerts without exposing a single public port.
 5. **Isolated Multi-Account WebView2 Sandboxes & Dual-Mode On-Demand Traffic Sync**

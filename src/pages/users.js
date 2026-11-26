@@ -13,6 +13,12 @@ import {
 } from '../constants/ui-constants.js';
 import { copyToClipboard, invokeCmd, withButtonLoading } from '../utils/bridge.js';
 import {
+  buildAllPlatformYaml,
+  buildBettboxUniversalJs,
+  buildCloudLandingSnippet,
+  downloadTextFile,
+} from '../utils/client-export.js';
+import {
   buildMihomoYaml,
   buildStandardNodeLink,
   countryFlag,
@@ -27,7 +33,68 @@ import { getActiveNatNode } from './nat-overview.js';
 const $ = (id) => document.getElementById(id);
 
 let activeUserModalCtx = null;
+let activeExportCtx = null;
 let vpsUsersCache = null;
+
+function buildExportOutput(ctx) {
+  const format = $('exportFormatSelect').value;
+  const devicePreset = $('exportDevicePreset').value;
+  const includeOpsChannel = $('exportIncludeOps').checked;
+  const frontSubUrl = $('exportFrontSubUrl').value.trim();
+  const cloudLandingUrl = $('exportCloudLandingUrl').value.trim();
+  const excludeGecko = $('exportExcludeGecko').checked;
+
+  const isYaml = format === 'all_platform_yaml';
+  const isNatSnippet = format === 'nat_provider_yaml';
+  $('exportDeviceWrap').classList.toggle('hidden', isNatSnippet);
+  $('exportOpsWrap').classList.toggle('hidden', isNatSnippet);
+  $('exportYamlOptsWrap').classList.toggle('hidden', !isYaml);
+
+  const safeUser = String(ctx.username || 'member').replace(/[^a-zA-Z0-9_\u4e00-\u9fa5-]/g, '_');
+  if (isNatSnippet) {
+    return {
+      filename: `nat-landing-${safeUser}.yaml`,
+      content: buildCloudLandingSnippet(ctx),
+    };
+  }
+  if (isYaml) {
+    return {
+      filename: `nodedeck-all-platform-${safeUser}.yaml`,
+      content: buildAllPlatformYaml(ctx, {
+        devicePreset,
+        includeOpsChannel,
+        frontSubUrl,
+        cloudLandingUrl,
+        excludeGecko,
+      }),
+    };
+  }
+  return {
+    filename: `nodedeck-v4.3-${safeUser}-${devicePreset}.js`,
+    content: buildBettboxUniversalJs(ctx, { devicePreset, includeOpsChannel }),
+  };
+}
+
+function refreshExportPreview() {
+  if (!activeExportCtx) return;
+  const { content } = buildExportOutput(activeExportCtx);
+  $('exportPreviewCode').textContent = content;
+}
+
+function openClientExportModal(ctx) {
+  activeExportCtx = ctx;
+  const proto = String(ctx.proto || 'vless').toUpperCase();
+  $('exportModalTitle').textContent = `⚙️ 导出「${ctx.username || ctx.nodeName}」客户端配置`;
+  $('exportModalSub').textContent = `节点：${ctx.nodeName || '--'} · ${proto} :${ctx.port || '--'}（纯本机离线拼装，零网络上传）`;
+  $('exportFormatSelect').value = proto === 'SOCKS' || proto === 'SOCKS5' ? 'nat_provider_yaml' : 'bettbox_js';
+  $('exportDevicePreset').value = 'universal';
+  $('exportIncludeOps').checked = String(ctx.username || '').toLowerCase() === 'me';
+  $('exportFrontSubUrl').value = '';
+  $('exportCloudLandingUrl').value = '';
+  $('exportExcludeGecko').checked = true;
+  refreshExportPreview();
+  openModal('clientExportModal');
+}
 
 function openNodeUserModal(ctx) {
   activeUserModalCtx = ctx;
@@ -139,6 +206,7 @@ function renderMatrixView(appState) {
                   <button class="btn sm" data-action="mx-edit" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">✏️ 改名/密码</button>
                   <button class="btn sm" data-action="mx-copy-link" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📋 链接</button>
                   <button class="btn sm" data-action="mx-copy-yaml" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📋 YAML</button>
+                  <button class="btn sm primary" data-action="mx-export" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">⚙️ 导出配置</button>
                   ${r.proto !== 'shadowsocks'
                     ? `<button class="btn sm danger" data-action="mx-del" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">移除</button>`
                     : ''}
@@ -226,6 +294,7 @@ async function loadCurrentNatUsers(appState, node) {
                     <button class="btn sm" data-action="nat-u-edit" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-port="${esc(inb.listenPort)}" data-user="${esc(uname)}" data-cred="${esc(cred)}">✏️ 改名/密码</button>
                     <button class="btn sm" data-action="nat-u-link" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 链接</button>
                     <button class="btn sm" data-action="nat-u-yaml" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 YAML</button>
+                    <button class="btn sm primary" data-action="nat-u-export" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">⚙️ 导出配置</button>
                     ${proto !== 'shadowsocks'
                       ? `<button class="btn sm danger" data-action="nat-u-del" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">移除</button>`
                       : ''}
@@ -288,6 +357,7 @@ async function loadCurrentVpsUsers(appState) {
           <div class="toolbar mt-xs">
             <button class="btn sm primary" data-action="copy-vless" data-link="${esc(u.vlessLink)}" data-name="${esc(u.name)}">📋 链接</button>
             <button class="btn sm" data-action="copy-yaml" data-yaml="${esc(yaml)}" data-name="${esc(u.name)}">📋 YAML</button>
+            <button class="btn sm" data-action="export-vps-u" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">⚙️ 导出配置</button>
             <button class="btn sm" data-action="edit-vps-u" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">✏️ 改名/UUID</button>
             <button class="btn sm" data-action="pause-user" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">暂停</button>
             <button class="btn sm danger" data-action="delete-user" data-uuid="${esc(u.uuid)}" data-name="${esc(u.name)}">删除</button>
@@ -448,6 +518,24 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
       });
       return;
     }
+    if (action === 'mx-export' && node && inb) {
+      const proto = String(inb.type || '').toLowerCase();
+      openClientExportModal({
+        nodeName: node.name,
+        host: node.host || '',
+        proto,
+        port: inb.listenPort,
+        sni: inb.sni || '',
+        shortId: inb.shortId || '',
+        publicKey: node.publicKey || '',
+        method: inb.method || '',
+        username: uname,
+        credential: proto === 'vless' ? (user?.uuid || '') : (user?.password || inb.password || ''),
+        flow: user?.flow || 'xtls-rprx-vision',
+        dialerProxy: appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY,
+      });
+      return;
+    }
     if ((action === 'mx-copy-link' || action === 'mx-copy-yaml') && node && inb) {
       const protoTag = String(inb.type || '').toUpperCase();
       const dialer = appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY;
@@ -536,6 +624,28 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         username: btn.dataset.user,
         password: btn.dataset.cred,
         origName: btn.dataset.user,
+      });
+      return;
+    }
+    if (act === 'nat-u-export') {
+      const snap = JSON.parse($('natUsersPane').dataset.cfgJson || '{}');
+      const inb = (snap.inbounds || []).find((i) => i.tag === btn.dataset.tag);
+      const u = (inb?.usersDetail || []).find((x) => (x.username || x.name || inb.tag) === btn.dataset.user);
+      if (!inb) return;
+      const proto = String(inb.type || '').toLowerCase();
+      openClientExportModal({
+        nodeName: snap.name || node.name,
+        host: snap.host || '',
+        proto,
+        port: inb.listenPort,
+        sni: inb.sni || '',
+        shortId: inb.shortId || '',
+        publicKey: snap.publicKey || '',
+        method: inb.method || '',
+        username: btn.dataset.user,
+        credential: proto === 'vless' ? (u?.uuid || '') : (u?.password || inb.password || ''),
+        flow: u?.flow || 'xtls-rprx-vision',
+        dialerProxy: appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY,
       });
       return;
     }
@@ -641,6 +751,23 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
       return;
     }
 
+    if (action === 'export-vps-u') {
+      openClientExportModal({
+        nodeName: appState.localConfig?.name || 'Primary VPS',
+        host: appState.localConfig?.host || '',
+        proto: 'vless',
+        port: vpsUsersCache?.listenPort || 8443,
+        sni: vpsUsersCache?.sni || '',
+        shortId: vpsUsersCache?.shortId || '',
+        publicKey: appState.localConfig?.realityPublicKey || '',
+        username: name,
+        credential: uuid,
+        flow: 'xtls-rprx-vision',
+        dialerProxy: appState.localConfig?.dialerProxy || DEFAULT_DIALER_PROXY,
+      });
+      return;
+    }
+
     if (action === 'edit-vps-u') {
       openNodeUserModal({
         vpsUuid: uuid,
@@ -701,4 +828,28 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
 
   $('activeUsersGrid').addEventListener('click', handleCardClick);
   $('disabledUsersGrid').addEventListener('click', handleCardClick);
+
+  $('closeExportConfigBtn').addEventListener('click', () => closeModal('clientExportModal'));
+  ['exportFormatSelect', 'exportDevicePreset', 'exportIncludeOps', 'exportExcludeGecko'].forEach((id) => {
+    $(id).addEventListener('change', refreshExportPreview);
+  });
+  ['exportFrontSubUrl', 'exportCloudLandingUrl'].forEach((id) => {
+    $(id).addEventListener('input', refreshExportPreview);
+  });
+  $('copyExportConfigBtn').addEventListener('click', async () => {
+    if (!activeExportCtx) return;
+    try {
+      const { content } = buildExportOutput(activeExportCtx);
+      await copyToClipboard(content);
+      showToast('已复制完整客户端配置到剪贴板');
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+  $('downloadExportConfigBtn').addEventListener('click', () => {
+    if (!activeExportCtx) return;
+    const { filename, content } = buildExportOutput(activeExportCtx);
+    downloadTextFile(filename, content);
+    showToast(`已导出文件：${filename}`);
+  });
 }

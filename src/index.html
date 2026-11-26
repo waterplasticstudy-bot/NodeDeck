@@ -14,7 +14,7 @@
       <div class="brand-row">
         <img class="app-icon-img" src="./assets/app-icon.png" alt="NodeDeck" />
         <div>
-          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.0.2</span></h1>
+          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.0.3</span></h1>
           <small id="sideHost" class="mono">等待连接...</small>
         </div>
       </div>
@@ -1042,6 +1042,69 @@
       <div class="toolbar toolbar-end">
         <button class="btn" id="cancelAddUser">取消</button>
         <button class="btn primary" id="confirmAddUser">确认新增并重载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Export Per-Member Client Config (Pure Local Offline Generator) -->
+  <div class="modal-bg" id="clientExportModal">
+    <div class="modal wide modal-scroll">
+      <div class="flex-between mb-sm">
+        <div>
+          <h3 class="card-title-lg" id="exportModalTitle">⚙️ 导出客户端专属配置</h3>
+          <div class="sub-note" id="exportModalSub">纯本地离线拼装，零网络上传</div>
+        </div>
+        <button class="btn sm" id="closeExportConfigBtn">关闭</button>
+      </div>
+
+      <div class="form-grid mb-md">
+        <div class="field">
+          <label>导出格式</label>
+          <select id="exportFormatSelect">
+            <option value="bettbox_js">Bettbox / Clash Verge 万能脚本 v4.3 (.js)</option>
+            <option value="all_platform_yaml">全平台单链配置 · iOS + Bettbox 通用 (.yaml)</option>
+            <option value="nat_provider_yaml">云端落地节点片段 · nat-landing.yaml (Gist #1)</option>
+          </select>
+        </div>
+        <div class="field" id="exportDeviceWrap">
+          <label>设备系统优化预设 (fake-ip-filter)</label>
+          <select id="exportDevicePreset">
+            <option value="universal">全平台通用（iOS + Win + 鸿蒙 + vivo + 小米）</option>
+            <option value="harmony">华为鸿蒙 4 / 7 专优</option>
+            <option value="vivo_win">vivo OriginOS + Windows 双端</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-grid mb-md hidden" id="exportYamlOptsWrap">
+        <div class="field col-span-full">
+          <label>可选：前置机场订阅链接（留空则生成占位符，导入前自行填入）</label>
+          <input class="input mono" id="exportFrontSubUrl" placeholder="留空将输出 REPLACE_WITH_FRONT_AIRPORT_SUB_URL" />
+        </div>
+        <div class="field col-span-full">
+          <label>可选：云端 NAT 清单 Raw 链接（留空则把当前节点直接内置；填写则自动开启双 Provider 热同步）</label>
+          <input class="input mono" id="exportCloudLandingUrl" placeholder="例如 https://gist.githubusercontent.com/<user>/<id>/raw/nat-landing.yaml" />
+        </div>
+        <div class="field col-span-full">
+          <label class="row-inline">
+            <input type="checkbox" id="exportExcludeGecko" checked />
+            <span>前置优选池自动剔除 <code>1💎 / 非数字1结尾</code> 失效混淆节点（推荐适配主流专线机场）</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field mb-md" id="exportOpsWrap">
+        <label class="row-inline">
+          <input type="checkbox" id="exportIncludeOps" />
+          <span>保留 <code>🔧 运维通道</code> 分组（仅管理员本人建议勾选；发给普通成员时取消勾选更简洁且仍防回环）</span>
+        </label>
+      </div>
+
+      <pre class="terminal compact mb-md" id="exportPreviewCode" style="max-height:290px;overflow:auto;"></pre>
+
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="copyExportConfigBtn">📋 一键复制</button>
+        <button class="btn primary" id="downloadExportConfigBtn">💾 保存到本地文件</button>
       </div>
     </div>
   </div>

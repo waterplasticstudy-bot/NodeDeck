@@ -194,11 +194,16 @@ impl MihomoClient {
 
     pub async fn get_status(&self, cfg: &AppConfig) -> Value {
         let api_url = cfg.mihomo_api_url.clone();
-        let fetched = tokio::try_join!(
-            self.request(cfg, Method::GET, "/version", None, MIHOMO_TIMEOUT_MS),
-            self.request(cfg, Method::GET, "/configs", None, MIHOMO_TIMEOUT_MS),
-            self.request(cfg, Method::GET, "/proxies", None, MIHOMO_TIMEOUT_MS),
-            self.request(cfg, Method::GET, "/connections", None, MIHOMO_TIMEOUT_MS),
+        let (fetched, providers_res) = tokio::join!(
+            async {
+                tokio::try_join!(
+                    self.request(cfg, Method::GET, "/version", None, MIHOMO_TIMEOUT_MS),
+                    self.request(cfg, Method::GET, "/configs", None, MIHOMO_TIMEOUT_MS),
+                    self.request(cfg, Method::GET, "/proxies", None, MIHOMO_TIMEOUT_MS),
+                    self.request(cfg, Method::GET, "/connections", None, MIHOMO_TIMEOUT_MS),
+                )
+            },
+            self.request(cfg, Method::GET, "/providers/proxies", None, MIHOMO_TIMEOUT_MS),
         );
 
         let (ver, conf, proxies_resp, conns_resp) = match fetched {
@@ -218,11 +223,42 @@ impl MihomoClient {
             }
         };
 
-        let raw_proxies = proxies_resp
+        let mut raw_proxies = proxies_resp
             .get("proxies")
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+
+        // 合并 /providers/proxies 中的远程节点元数据（支持识别 proxy-providers + override.dialer-proxy 链式拓扑）
+        if let Ok(providers_resp) = providers_res {
+            if let Some(providers_map) = providers_resp.get("providers").and_then(Value::as_object) {
+                for provider in providers_map.values() {
+                    let vtype = provider.get("vehicleType").and_then(Value::as_str).unwrap_or("");
+                    if vtype == "Compatible" {
+                        continue;
+                    }
+                    if let Some(plist) = provider.get("proxies").and_then(Value::as_array) {
+                        for item in plist {
+                            let Some(pname) = item.get("name").and_then(Value::as_str) else {
+                                continue;
+                            };
+                            if pname.is_empty() {
+                                continue;
+                            }
+                            if let Some(existing) = raw_proxies.get_mut(pname).and_then(Value::as_object_mut) {
+                                if !existing.contains_key("dialer-proxy") && !existing.contains_key("dialerProxy") {
+                                    if let Some(dp) = item.get("dialer-proxy").or_else(|| item.get("dialerProxy")) {
+                                        existing.insert("dialer-proxy".to_string(), dp.clone());
+                                    }
+                                }
+                            } else {
+                                raw_proxies.insert(pname.to_string(), item.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let mut groups: Vec<Value> = raw_proxies
             .iter()

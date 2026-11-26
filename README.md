@@ -64,7 +64,7 @@
 - 一眼查看所有 VPS 与 NAT 各自归属哪些使用用户，支持跨机按人/协议/端口检索、原地改名改密与暂停/恢复。
 - **严格对齐客户端规范的分享导出**：
   - 自动按协议生成标准链接：`vless://...`、`socks://<RawBase64(UTF8(u:p))>@host:port#remark`、`http://...`、`ss://<RawURLBase64(m:p)>@host:port#remark`（完美兼容中文备注与密码，避免 `=` 填充转义污染）。
-  - 一键生成带 `dialer-proxy` 的 **Mihomo / Clash 链式落地 YAML** 片段。
+  - 一键生成带 `dialer-proxy` 的 **Mihomo / Clash 链式落地 YAML** 片段，并在「⚙️ 导出配置」中纯离线按成员生成 **Bettbox 万能覆写 `.js`**、**全平台双 Provider `.yaml`（iOS + Bettbox 通用）** 及 **云端 `nat-landing.yaml` 片段**。
 
 ### 4. `127.0.0.1` 零暴露成员流量与防外泄审计
 - 一键为主 VPS 或任意 Alpine NAT 开启本地 Clash API 统计口（仅监听 `127.0.0.1` + 随机 32 位 Bearer Secret），按用户实时追踪活跃连接、上传/下载流量与来源前置 IP。
