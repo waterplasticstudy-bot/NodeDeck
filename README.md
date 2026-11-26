@@ -78,7 +78,8 @@
 
 ### 6. 本机 Mihomo / Clash API 联动
 - 兼容 **Clash Verge Rev / FlClash / Mihomo Meta** 等全部支持 Clash External Controller API（仅限 `127.0.0.1` / `localhost`）的本机客户端。
-- 支持规则/全局/直连切换、策略组选节点与测速、实时连接分流排查、AI 平台并发连通性测速及可选内嵌原版 Web UI。
+- 支持**基于 `dialer-proxy` 的零硬编码链式拓扑自动识别**与底跳节点递归穿透展示、策略组智能置顶、实时连接排查与 AI 平台并发连通性测速。
+- 附带跨机场通用规则覆写参考模板：[mihomo-universal-override.example.js](./docs/mihomo-universal-override.example.js)（MetaCubeX `.mrs` 规则集 + 服务器 SSH 运维防回环分组）。
 
 ---
 

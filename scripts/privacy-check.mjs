@@ -24,6 +24,10 @@ const ALLOWED_PUBLIC_IPS = new Set([
   '1.0.0.1',
   '8.8.8.8',
   '8.8.4.4',
+  '223.5.5.5',
+  '223.6.6.6',
+  '119.29.29.29',
+  '1.12.12.12',
   '255.255.255.255',
 ]);
 
@@ -35,6 +39,8 @@ function isSafeIpv4(ip) {
   if (a === 127 || a === 10 || a === 0) return true;
   if (a === 192 && b === 168) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
+  // RFC 2544 / Mihomo Fake-IP range: 198.18.0.0/15
+  if (a === 198 && (b === 18 || b === 19)) return true;
   // RFC 5737 Documentation IPs: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
   if (a === 192 && b === 0 && c === 2) return true;
   if (a === 198 && b === 51 && c === 100) return true;

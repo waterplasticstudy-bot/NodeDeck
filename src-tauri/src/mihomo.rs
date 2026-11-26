@@ -9,9 +9,110 @@ use crate::constants::{
 };
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use url::Url;
+
+fn resolve_group_leaf(raw_proxies: &serde_json::Map<String, Value>, start: &str) -> String {
+    let mut current = start.to_string();
+    let mut visited = HashSet::new();
+    for _ in 0..8 {
+        if current.is_empty() || !visited.insert(current.clone()) {
+            break;
+        }
+        let next = raw_proxies
+            .get(&current)
+            .and_then(|v| v.get("now"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        match next {
+            Some(n) => current = n.to_string(),
+            None => break,
+        }
+    }
+    current
+}
+
+fn format_hop_display(raw_proxies: &serde_json::Map<String, Value>, direct_now: &str) -> String {
+    if direct_now.is_empty() {
+        return "--".to_string();
+    }
+    let leaf = resolve_group_leaf(raw_proxies, direct_now);
+    if !leaf.is_empty() && leaf != direct_now {
+        format!("{direct_now} → {leaf}")
+    } else {
+        direct_now.to_string()
+    }
+}
+
+fn detect_chained_topology(
+    raw_proxies: &serde_json::Map<String, Value>,
+) -> (Option<String>, Option<String>) {
+    let mut chained_nodes: HashMap<String, String> = HashMap::new();
+    for (name, proxy) in raw_proxies {
+        let ptype = proxy.get("type").and_then(Value::as_str).unwrap_or("");
+        if MIHOMO_GROUP_TYPES.contains(&ptype) {
+            continue;
+        }
+        let dialer = proxy
+            .get("dialer-proxy")
+            .or_else(|| proxy.get("dialerProxy"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(d) = dialer {
+            chained_nodes.insert(name.clone(), d.to_string());
+        }
+    }
+    if chained_nodes.is_empty() {
+        return (None, None);
+    }
+
+    // 优先选取当前已选中链式节点且成员最聚焦（all 最少）的非 GLOBAL Selector 作为落地组
+    let mut best_active: Option<(usize, String, String)> = None;
+    let mut best_candidate: Option<(usize, String, String)> = None;
+
+    for (gname, proxy) in raw_proxies {
+        if gname == "GLOBAL" {
+            continue;
+        }
+        let ptype = proxy.get("type").and_then(Value::as_str).unwrap_or("");
+        if ptype != "Selector" {
+            continue;
+        }
+        let Some(all) = proxy.get("all").and_then(Value::as_array) else {
+            continue;
+        };
+        let now = proxy.get("now").and_then(Value::as_str).unwrap_or("");
+        if let Some(dialer) = chained_nodes.get(now) {
+            let score = all.len();
+            if best_active.as_ref().is_none_or(|(s, _, _)| score < *s) {
+                best_active = Some((score, gname.clone(), dialer.clone()));
+            }
+        }
+        for item in all.iter().filter_map(Value::as_str) {
+            if let Some(dialer) = chained_nodes.get(item) {
+                let score = all.len();
+                if best_candidate.as_ref().is_none_or(|(s, _, _)| score < *s) {
+                    best_candidate = Some((score, gname.clone(), dialer.clone()));
+                }
+                break;
+            }
+        }
+    }
+
+    if let Some((_, exit_grp, front_grp)) = best_active.or(best_candidate) {
+        let valid_front = raw_proxies.contains_key(&front_grp).then_some(front_grp);
+        return (valid_front, Some(exit_grp));
+    }
+
+    let first_front = chained_nodes
+        .values()
+        .find(|d| raw_proxies.contains_key(*d))
+        .cloned();
+    (first_front, None)
+}
 
 pub struct MihomoClient {
     /// 强制禁用系统代理，防止 127.0.0.1:9090 被代理端口回环拦截
@@ -159,17 +260,45 @@ impl MihomoClient {
             })
             .collect();
 
+        let (detected_front, detected_exit) = detect_chained_topology(&raw_proxies);
+
+        let group_rank = |name: &str| -> (u8, usize) {
+            if detected_front.as_deref() == Some(name) {
+                return (0, 0);
+            }
+            if detected_exit.as_deref() == Some(name) {
+                return (1, 0);
+            }
+            if name == "GLOBAL" {
+                return (5, 0);
+            }
+            if let Some(pos) = MIHOMO_PRIORITY_GROUPS
+                .iter()
+                .filter(|&&x| x != "GLOBAL")
+                .position(|&x| x == name)
+            {
+                return (2, pos);
+            }
+            let lower = name.to_ascii_lowercase();
+            if lower.contains("ai")
+                || lower.contains("运维")
+                || lower.contains("ops")
+                || lower.contains("落地")
+                || lower.contains("exit")
+                || lower.contains("漏网")
+                || lower.contains("兜底")
+                || lower.contains("fallback")
+                || lower.contains("节点选择")
+            {
+                return (3, 0);
+            }
+            (4, 0)
+        };
+
         groups.sort_by(|a, b| {
             let na = a.get("name").and_then(Value::as_str).unwrap_or("");
             let nb = b.get("name").and_then(Value::as_str).unwrap_or("");
-            let ia = MIHOMO_PRIORITY_GROUPS.iter().position(|&x| x == na);
-            let ib = MIHOMO_PRIORITY_GROUPS.iter().position(|&x| x == nb);
-            match (ia, ib) {
-                (Some(x), Some(y)) => x.cmp(&y),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => na.cmp(nb),
-            }
+            (group_rank(na), na).cmp(&(group_rank(nb), nb))
         });
 
         let mut conns: Vec<Value> = conns_resp
@@ -230,11 +359,19 @@ impl MihomoClient {
         let total_conns = conns.len();
         conns.truncate(MAX_MIHOMO_CONNECTIONS);
 
-        let primary_group = groups.iter().find(|g| g["name"].as_str() != Some("GLOBAL"));
-        let secondary_group = groups
-            .iter()
-            .filter(|g| g["name"].as_str() != Some("GLOBAL"))
-            .nth(1);
+        let primary_group = detected_front
+            .as_deref()
+            .and_then(|target| groups.iter().find(|g| g["name"].as_str() == Some(target)))
+            .or_else(|| groups.iter().find(|g| g["name"].as_str() != Some("GLOBAL")));
+        let primary_name_str = primary_group.and_then(|g| g["name"].as_str());
+        let secondary_group = detected_exit
+            .as_deref()
+            .and_then(|target| groups.iter().find(|g| g["name"].as_str() == Some(target)))
+            .or_else(|| {
+                groups
+                    .iter()
+                    .find(|g| g["name"].as_str() != Some("GLOBAL") && g["name"].as_str() != primary_name_str)
+            });
         let fallback_group = groups
             .iter()
             .find(|g| {
@@ -242,6 +379,11 @@ impl MihomoClient {
                 n.contains("fallback") || n.contains("兜底") || n.contains("漏网")
             })
             .or_else(|| groups.iter().find(|g| g["name"].as_str() == Some("GLOBAL")));
+
+        let primary_now_raw = primary_group.and_then(|g| g["now"].as_str()).unwrap_or("");
+        let secondary_now_raw = secondary_group.and_then(|g| g["now"].as_str()).unwrap_or("");
+        let fallback_now_raw = fallback_group.and_then(|g| g["now"].as_str()).unwrap_or("");
+        let chain_detected = detected_front.is_some() && detected_exit.is_some();
 
         let mode = conf.get("mode").and_then(Value::as_str).unwrap_or("rule");
 
@@ -261,11 +403,13 @@ impl MihomoClient {
             "totalConnections": total_conns,
             "chainSummary": {
                 "mode": mode,
-                "primaryName": primary_group.and_then(|g| g["name"].as_str()).unwrap_or("主力策略组"),
-                "primaryNow": primary_group.and_then(|g| g["now"].as_str()).unwrap_or("--"),
+                "chainDetected": chain_detected,
+                "primaryName": primary_name_str.unwrap_or("主力策略组"),
+                "primaryNow": format_hop_display(&raw_proxies, primary_now_raw),
                 "secondaryName": secondary_group.and_then(|g| g["name"].as_str()).unwrap_or("次级策略组"),
-                "secondaryNow": secondary_group.and_then(|g| g["now"].as_str()).unwrap_or("--"),
-                "fallback": fallback_group.and_then(|g| g["now"].as_str()).unwrap_or("--")
+                "secondaryNow": format_hop_display(&raw_proxies, secondary_now_raw),
+                "fallbackName": fallback_group.and_then(|g| g["name"].as_str()).unwrap_or("兜底分流"),
+                "fallback": format_hop_display(&raw_proxies, fallback_now_raw)
             },
             "groups": groups,
             "connections": conns

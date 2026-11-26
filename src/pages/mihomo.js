@@ -141,11 +141,13 @@ export async function loadMihomo(appState) {
     $('mhOffBox').classList.add('hidden');
     $('mhOnBox').classList.remove('hidden');
 
-    $('chLocal').textContent = `Mihomo · ${modeZh}模式`;
-    $('chPrimaryLbl').textContent = `② ${d.chainSummary?.primaryName || '主力策略组'}`;
+    const isChained = Boolean(d.chainSummary?.chainDetected);
+    $('chLocal').textContent = `Mihomo · ${modeZh}模式${isChained ? ' (链式)' : ''}`;
+    $('chPrimaryLbl').textContent = `② ${isChained ? '前置 · ' : ''}${d.chainSummary?.primaryName || '主力策略组'}`;
     $('chPrimary').textContent = d.chainSummary?.primaryNow || '--';
-    $('chSecondaryLbl').textContent = `③ ${d.chainSummary?.secondaryName || '次级策略组'}`;
+    $('chSecondaryLbl').textContent = `③ ${isChained ? '落地 · ' : ''}${d.chainSummary?.secondaryName || '次级策略组'}`;
     $('chSecondary').textContent = d.chainSummary?.secondaryNow || '--';
+    $('chFallbackLbl').textContent = `④ ${d.chainSummary?.fallbackName || '兜底分流状态'}`;
     $('chFallback').textContent = d.chainSummary?.fallback || '--';
 
     $('mhConnNum').textContent = d.totalConnections;

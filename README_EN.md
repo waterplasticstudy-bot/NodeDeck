@@ -63,7 +63,8 @@
    - **Mode A (Zero-Subscription Dashboard Scraping)**: Read used/total traffic directly from your signed-in dashboard window via native WebView2 `eval_with_callback`.
    - **Mode B (Optional One-Shot Subscription Check)**: Optionally attach a subscription URL for manual single-shot `subscription-userinfo` inspection (with local Mihomo proxy fallback — **never auto-polled**).
 6. **Local Mihomo / Clash API Integration**
-   - Works with **Clash Verge Rev**, **FlClash**, **Mihomo Meta**, and any local Clash External Controller (`127.0.0.1` / `localhost` only) for mode switching, proxy group selection, delay testing, live connection inspection, and AI connectivity probing.
+   - Works with **Clash Verge Rev**, **FlClash**, **Mihomo Meta**, and any local Clash External Controller (`127.0.0.1` / `localhost` only).
+   - Features **zero-hardcoded `dialer-proxy` chain topology auto-discovery** with recursive leaf resolution, smart group prioritization, live connection filtering, AI connectivity probing, and a provider-agnostic universal override template ([mihomo-universal-override.example.js](./docs/mihomo-universal-override.example.js)).
 
 ---
 
