@@ -1,18 +1,16 @@
 // ============================================================================
 // NodeDeck Universal Mihomo / Clash Meta JS Override Template (Zero-Privacy Example)
-// Compatible with: Bettbox, Clash Verge Rev, FlClash, Mihomo Meta (v1.19+)
+// Version: v4.3-Universal | Compatible with: Bettbox, Clash Verge Rev, FlClash, Mihomo v1.19+
 //
 // Design Principles:
-//   1. Provider-Agnostic ("Airport as Raw Node Pool"): Completely replaces messy
-//      upstream proxy-groups & rules with one clean, consistent MetaCubeX .mrs
-//      ruleset so switching subscriptions never changes your groups or breaks chains.
-//   2. Zero SSH / Management Loopback Deadlock: Dedicated "🔧 运维通道" group
-//      routes your self-hosted VPS/NAT management IPs via DIRECT by default (with
-//      optional 1-hop Front-Hop fallback), preventing SSH-through-self deadlocks.
-//   3. Clean Asia-Pacific Front-Hop Pool: Excludes info nodes & >1x high-multiplier
-//      nodes from url-test speed pool, prefers TCP protocols, uses tolerance=80ms.
-//   4. Idempotent & Non-Intrusive: Safe across repeated reloads; never overwrites
-//      client-managed `tun` toggles across desktop/mobile devices.
+//   1. Provider-Agnostic & Crash-Proof: Sanitizes upstream hosts/sub-rules/geodata-mode,
+//      auto-renames colliding proxy names, handles inline & proxy-providers subscriptions.
+//   2. Zero SSH / Management Loopback Deadlock: Dedicated "🔧 运维通道" routes self-hosted
+//      VPS/NAT management IPs via 1-hop Front-Hop (with DIRECT emergency fallback).
+//   3. Dual Front-Hop Strategy: "⚡ 前置测速" (url-test, excludes gecko Hy2 & CF-WS CDN)
+//      + "🛡️ 前置稳定" (fallback, zero-drift battery-saving failover for mobile).
+//   4. Anti-Leak & Shared Cache: 17 MetaCubeX .mrs with shared ./ruleset/ cache,
+//      proxy_domain before cn_domain, safe SNI sniffer, dns.ipv6=false, fine-grained QUIC.
 // ============================================================================
 
 const USER_CONFIG = {
@@ -22,7 +20,7 @@ const USER_CONFIG = {
     "203.0.113.21",
   ],
 
-  // 2. Your self-hosted chained landing node(s) (dialer-proxy will bind automatically)
+  // 2. Your primary self-hosted chained landing node (dialer-proxy binds automatically)
   landingNodes: [
     {
       name: "落地-自建VPS(链式)",
@@ -44,18 +42,19 @@ const USER_CONFIG = {
     },
   ],
 
-  // 3. Default exit mode for general non-CN traffic:
-  //    "landing" -> Lock ALL non-CN traffic to your landing exit (strict single IP)
-  //    "airport" -> Only AI & Google Account lock to landing; streaming/general use provider
+  // 3. Default exit mode for general non-CN traffic: "landing" (strict single IP) | "airport"
   defaultOutboundMode: "landing",
 
   // 4. MetaCubeX .mrs mirror prefix
+  // Fallback 1: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo"
+  // Fallback 2: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo"
   mrsMirror: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo",
 };
 
 function main(config) {
   const FRONT_GROUP = "前置代理";
   const FRONT_SPEED = "⚡ 前置测速";
+  const FRONT_STABLE = "🛡️ 前置稳定";
   const EXIT_GROUP = "落地出口";
   const OPS_GROUP = "🔧 运维通道";
   const DIRECT_AIRPORT_GROUP = "🚀 节点直出";
@@ -66,74 +65,119 @@ function main(config) {
   const DEV_GROUP = "💻 GitHub & 开发";
   const FALLBACK_GROUP = "🐟 漏网之鱼";
 
+  const RESERVED_NAMES = new Set([
+    FRONT_GROUP, FRONT_SPEED, FRONT_STABLE, EXIT_GROUP, OPS_GROUP,
+    DIRECT_AIRPORT_GROUP, AI_GROUP, GOOGLE_GROUP, MEDIA_GROUP,
+    SOCIAL_GROUP, DEV_GROUP, FALLBACK_GROUP,
+    "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL",
+  ]);
+
   const INFO_RE = /剩余|到期|重置|官网|套餐|流量|订阅|续费|更新|公告|网址|群组|客服|故障|说明|过期|Expire|Traffic|Reset|Website/i;
+  const INFO_FILTER_STR = "剩余|到期|重置|官网|套餐|流量|订阅|续费|更新|公告|网址|群组|客服|故障|说明|过期|Expire|Traffic|Reset|Website";
+  const HIGH_MULT_FILTER_STR = "2x|3x|4x|5x|8x|10x|2X|3X|5X|2倍|3倍|5倍";
   const APAC_RE = /香港|台湾|日本|东京|大阪|新加坡|韩国|澳门|Hong\s*Kong|Taiwan|Japan|Tokyo|Osaka|Singapore|Korea|Macau|(?:^|[^a-zA-Z])(?:HK|TW|JP|SG|KR|MO)(?![a-zA-Z])|🇭🇰|🇹🇼|🇯🇵|🇸🇬|🇰🇷|🇲🇴/i;
   const US_RE = /美国|美西|美东|洛杉矶|硅谷|圣何塞|西雅图|纽约|芝加哥|达拉斯|凤凰城|United\s*States|Los\s*Angeles|San\s*Jose|Seattle|(?:^|[^a-zA-Z])(?:US|USA)(?![a-zA-Z])|🇺🇸/i;
 
   function getMultiplier(name) {
+    const cleaned = String(name || "").replace(/\b(?:x86|x64|amd64|arm64|v[246])\b/gi, " ");
     const patterns = [
       /(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(?:[xX×]|倍)(?![a-zA-Z0-9])/g,
       /倍率\s*[:：=]?\s*(\d+(?:\.\d+)?)/g,
-      /(?:^|[^a-zA-Z0-9])[xX]([1-9]\d*(?:\.\d+)?|0\.\d+)(?![a-zA-Z0-9.])/g,
+      /×\s*(\d+(?:\.\d+)?)(?![a-zA-Z0-9.])/g,
+      /(?:^|[^a-zA-Z0-9])[xX]([1-9](?:\.\d+)?|1\d(?:\.\d+)?|20|0\.\d+)(?![a-zA-Z0-9.])/g,
     ];
     const vals = [];
     for (const re of patterns) {
       let m;
-      while ((m = re.exec(name)) !== null) {
+      while ((m = re.exec(cleaned)) !== null) {
         const v = parseFloat(m[1]);
-        if (!Number.isNaN(v)) vals.push(v);
+        if (!Number.isNaN(v) && v > 0 && v <= 20) vals.push(v);
       }
     }
     return vals.length ? Math.max(...vals) : 1;
   }
 
-  const isBrokenHy2 = (p) => {
-    const t = String(p?.type || "").toLowerCase();
-    const obfs = String(p?.obfs || "").toLowerCase();
-    return t === "hysteria2" && Boolean(obfs) && obfs !== "salamander";
-  };
-  const isCfWs = (p) => {
-    const netw = String(p?.network || "").toLowerCase();
-    const srv = String(p?.server || "").toLowerCase();
-    return netw === "ws" && (/(?:^|\.)cf[a-z0-9-]*\./i.test(srv) || /cloudflare|workers\.dev|pages\.dev/i.test(srv));
-  };
+  const isIpLiteral = (host) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(String(host || "").trim()) || String(host || "").includes(":");
+  const isBrokenHy2 = (p) => String(p?.type || "").toLowerCase() === "hysteria2" && Boolean(p?.obfs) && String(p.obfs).toLowerCase() !== "salamander";
+  const isCfWs = (p) => String(p?.network || "").toLowerCase() === "ws" && (/(?:^|\.)cf[a-z0-9-]*\./i.test(String(p?.server || "")) || /cloudflare|workers\.dev|pages\.dev/i.test(String(p?.server || "")));
   const isDedicatedLine = (p) => /专线|家宽|IEPL|IPLC|BGP|专属/i.test(String(p?.name || ""));
   const isUdpProto = (p) => /^(hysteria|hysteria2|tuic|wireguard|quic)/i.test(String(p?.type || ""));
   const sortFrontPriority = (arr) =>
     [...arr].sort((a, b) => {
-      const score = (x) =>
-        (isBrokenHy2(x) ? 100 : 0) +
-        (isCfWs(x) ? 40 : 0) +
-        (isDedicatedLine(x) ? 0 : 10) +
-        (isUdpProto(x) ? 2 : 0);
+      const score = (x) => (isBrokenHy2(x) ? 100 : 0) + (isCfWs(x) ? 40 : 0) + (isDedicatedLine(x) ? 0 : 10) + (isUdpProto(x) ? 2 : 0);
       return score(a) - score(b);
     });
   const unique = (arr) => Array.from(new Set(arr.filter(Boolean)));
 
+  // Sanitize polluted upstream top-level keys (never touches client-managed tun/ipv6/secret)
+  delete config.hosts;
+  delete config["sub-rules"];
+  config["geodata-mode"] = false;
+  config.profile = {
+    ...(config.profile && typeof config.profile === "object" ? config.profile : {}),
+    "store-selected": true,
+    "store-fake-ip": true,
+  };
+
   const managedNames = new Set(USER_CONFIG.landingNodes.map((n) => n.name));
+  const managedTargets = new Set(USER_CONFIG.landingNodes.map((n) => `${String(n.server || "").toLowerCase()}:${Number(n.port || 0)}`));
   const rawProxies = Array.isArray(config.proxies) ? config.proxies : [];
-  const providerProxies = rawProxies
-    .filter((p) => p && p.name && !managedNames.has(p.name) && !INFO_RE.test(p.name))
-    .map((p) => ({ ...p, "ip-version": p["ip-version"] || "ipv4-prefer" }));
-  const hasProxyProviders = config["proxy-providers"] && Object.keys(config["proxy-providers"]).length > 0;
+  const extraChainedNodes = [];
+  const providerProxies = [];
+  const seenNames = new Set(managedNames);
+
+  const safeUniqueName = (rawName) => {
+    let base = String(rawName || "").trim();
+    if (RESERVED_NAMES.has(base)) base = "[机场] " + base;
+    let candidate = base;
+    let idx = 2;
+    while (seenNames.has(candidate) || RESERVED_NAMES.has(candidate)) candidate = `${base} (${idx++})`;
+    seenNames.add(candidate);
+    return candidate;
+  };
+
+  for (const p of rawProxies) {
+    if (!p || !p.name) continue;
+    const rawName = String(p.name).trim();
+    const targetKey = `${String(p.server || "").toLowerCase()}:${Number(p.port || 0)}`;
+    if (managedNames.has(rawName) || managedTargets.has(targetKey)) continue;
+    if (INFO_RE.test(rawName)) continue;
+    const cleanName = safeUniqueName(rawName);
+    if (p["dialer-proxy"] || p.dialerProxy) {
+      extraChainedNodes.push({ ...p, name: cleanName, "dialer-proxy": FRONT_GROUP });
+      continue;
+    }
+    providerProxies.push(
+      isIpLiteral(p.server)
+        ? { ...p, name: cleanName }
+        : { ...p, name: cleanName, "ip-version": p["ip-version"] || "ipv4-prefer" }
+    );
+  }
+
+  const hasProxyProviders = Boolean(config["proxy-providers"] && Object.keys(config["proxy-providers"]).length > 0);
   const providerKeys = hasProxyProviders ? Object.keys(config["proxy-providers"]) : [];
 
   const normalNodes = sortFrontPriority(providerProxies.filter((p) => getMultiplier(p.name) <= 1));
   const highMultNodes = sortFrontPriority(providerProxies.filter((p) => getMultiplier(p.name) > 1));
   const apacNormal = normalNodes.filter((p) => APAC_RE.test(p.name));
   const apacClean = apacNormal.filter((p) => !isBrokenHy2(p) && !isCfWs(p));
+  const apacNoGecko = apacNormal.filter((p) => !isBrokenHy2(p));
   const cleanNormal = normalNodes.filter((p) => !isBrokenHy2(p) && !isCfWs(p));
-  const speedPool = (
-    apacClean.length >= 2
-      ? apacClean
-      : apacNormal.length
-        ? apacNormal.filter((p) => !isBrokenHy2(p))
-        : cleanNormal.length
-          ? cleanNormal
-          : normalNodes.length
-            ? normalNodes
-            : providerProxies
-  ).map((p) => p.name);
+  const noGeckoNormal = normalNodes.filter((p) => !isBrokenHy2(p));
+  const noGeckoAll = providerProxies.filter((p) => !isBrokenHy2(p));
+
+  const candidatePools = [
+    apacClean.length >= 2 ? apacClean : [],
+    apacClean,
+    apacNoGecko,
+    cleanNormal,
+    noGeckoNormal,
+    noGeckoAll,
+    normalNodes,
+    providerProxies,
+  ];
+  const speedPool = (candidatePools.find((arr) => arr.length > 0) || []).map((p) => p.name);
+
   const frontManualList = unique([
     ...apacClean.map((p) => p.name),
     ...apacNormal.map((p) => p.name),
@@ -145,10 +189,10 @@ function main(config) {
     ...highMultNodes.filter((p) => US_RE.test(p.name)).map((p) => p.name),
   ]);
 
-  const injectedLandings = USER_CONFIG.landingNodes.map((n) => ({
-    ...n,
-    "dialer-proxy": FRONT_GROUP,
-  }));
+  const injectedLandings = [
+    ...USER_CONFIG.landingNodes.map((n) => ({ ...n, "dialer-proxy": FRONT_GROUP })),
+    ...extraChainedNodes,
+  ];
   config.proxies = [...injectedLandings, ...providerProxies];
 
   const landingNames = injectedLandings.map((n) => n.name);
@@ -157,24 +201,40 @@ function main(config) {
     ? [EXIT_GROUP, DIRECT_AIRPORT_GROUP, FRONT_GROUP, "DIRECT"]
     : [DIRECT_AIRPORT_GROUP, EXIT_GROUP, FRONT_GROUP, "DIRECT"];
 
-  const speedGroupObj = {
-    name: FRONT_SPEED,
-    type: "url-test",
-    url: "https://www.gstatic.com/generate_204",
-    interval: 300,
-    tolerance: 80,
-    lazy: true,
-    ...(speedPool.length ? { proxies: speedPool } : { use: providerKeys, "exclude-filter": "剩余|到期|官网|套餐|2x|3x|5x" }),
-  };
+  const autoPoolSource = speedPool.length > 0
+    ? { proxies: speedPool }
+    : hasProxyProviders
+      ? { use: providerKeys, "exclude-filter": `${INFO_FILTER_STR}|${HIGH_MULT_FILTER_STR}` }
+      : { proxies: ["DIRECT"] };
+
+  const providerManualAttach = frontManualList.length === 0 && hasProxyProviders
+    ? { use: providerKeys, "exclude-filter": INFO_FILTER_STR }
+    : {};
 
   config["proxy-groups"] = [
     {
       name: FRONT_GROUP,
       type: "select",
-      proxies: unique([FRONT_SPEED, ...frontManualList]),
-      ...(frontManualList.length === 0 && hasProxyProviders ? { use: providerKeys } : {}),
+      proxies: unique([FRONT_SPEED, FRONT_STABLE, ...frontManualList]),
+      ...providerManualAttach,
     },
-    speedGroupObj,
+    {
+      name: FRONT_SPEED,
+      type: "url-test",
+      url: "https://www.gstatic.com/generate_204",
+      interval: 300,
+      tolerance: 80,
+      lazy: true,
+      ...autoPoolSource,
+    },
+    {
+      name: FRONT_STABLE,
+      type: "fallback",
+      url: "https://www.gstatic.com/generate_204",
+      interval: 300,
+      lazy: true,
+      ...autoPoolSource,
+    },
     {
       name: EXIT_GROUP,
       type: "select",
@@ -183,7 +243,7 @@ function main(config) {
     {
       name: OPS_GROUP,
       type: "select",
-      proxies: ["DIRECT", FRONT_GROUP],
+      proxies: [FRONT_GROUP, "DIRECT"],
     },
     {
       name: AI_GROUP,
@@ -213,8 +273,8 @@ function main(config) {
     {
       name: DIRECT_AIRPORT_GROUP,
       type: "select",
-      proxies: unique([FRONT_SPEED, ...frontManualList, EXIT_GROUP, "DIRECT"]),
-      ...(frontManualList.length === 0 && hasProxyProviders ? { use: providerKeys } : {}),
+      proxies: unique([FRONT_SPEED, FRONT_STABLE, ...frontManualList, EXIT_GROUP, "DIRECT"]),
+      ...providerManualAttach,
     },
     {
       name: FALLBACK_GROUP,
@@ -223,32 +283,33 @@ function main(config) {
     },
   ];
 
-  const mrs = (subPath, behavior = "domain") => ({
+  const mrs = (key, subPath, behavior = "domain") => ({
     type: "http",
     behavior,
     format: "mrs",
     url: `${USER_CONFIG.mrsMirror}/${subPath}`,
+    path: `./ruleset/${key}.mrs`,
     interval: 86400,
   });
 
   config["rule-providers"] = {
-    private_domain: mrs("geosite/private.mrs", "domain"),
-    private_ip: mrs("geoip/private.mrs", "ipcidr"),
-    ai_domain: mrs("geosite/category-ai-!cn.mrs", "domain"),
-    openai_domain: mrs("geosite/openai.mrs", "domain"),
-    anthropic_domain: mrs("geosite/anthropic.mrs", "domain"),
-    gemini_domain: mrs("geosite/google-gemini.mrs", "domain"),
-    google_domain: mrs("geosite/google.mrs", "domain"),
-    youtube_domain: mrs("geosite/youtube.mrs", "domain"),
-    github_domain: mrs("geosite/github.mrs", "domain"),
-    telegram_domain: mrs("geosite/telegram.mrs", "domain"),
-    telegram_ip: mrs("geoip/telegram.mrs", "ipcidr"),
-    netflix_domain: mrs("geosite/netflix.mrs", "domain"),
-    apple_domain: mrs("geosite/apple.mrs", "domain"),
-    microsoft_domain: mrs("geosite/microsoft.mrs", "domain"),
-    cn_domain: mrs("geosite/cn.mrs", "domain"),
-    cn_ip: mrs("geoip/cn.mrs", "ipcidr"),
-    proxy_domain: mrs("geosite/geolocation-!cn.mrs", "domain"),
+    private_domain: mrs("private_domain", "geosite/private.mrs", "domain"),
+    private_ip: mrs("private_ip", "geoip/private.mrs", "ipcidr"),
+    ai_domain: mrs("ai_domain", "geosite/category-ai-!cn.mrs", "domain"),
+    openai_domain: mrs("openai_domain", "geosite/openai.mrs", "domain"),
+    anthropic_domain: mrs("anthropic_domain", "geosite/anthropic.mrs", "domain"),
+    gemini_domain: mrs("gemini_domain", "geosite/google-gemini.mrs", "domain"),
+    google_domain: mrs("google_domain", "geosite/google.mrs", "domain"),
+    youtube_domain: mrs("youtube_domain", "geosite/youtube.mrs", "domain"),
+    github_domain: mrs("github_domain", "geosite/github.mrs", "domain"),
+    telegram_domain: mrs("telegram_domain", "geosite/telegram.mrs", "domain"),
+    telegram_ip: mrs("telegram_ip", "geoip/telegram.mrs", "ipcidr"),
+    netflix_domain: mrs("netflix_domain", "geosite/netflix.mrs", "domain"),
+    apple_domain: mrs("apple_domain", "geosite/apple.mrs", "domain"),
+    microsoft_domain: mrs("microsoft_domain", "geosite/microsoft.mrs", "domain"),
+    cn_domain: mrs("cn_domain", "geosite/cn.mrs", "domain"),
+    cn_ip: mrs("cn_ip", "geoip/cn.mrs", "ipcidr"),
+    proxy_domain: mrs("proxy_domain", "geosite/geolocation-!cn.mrs", "domain"),
   };
 
   const serverBypassRules = USER_CONFIG.managedServerIps
@@ -256,27 +317,23 @@ function main(config) {
     .map((ip) => `IP-CIDR,${ip}/32,${OPS_GROUP},no-resolve`);
 
   config.rules = [
-    // 1. Loopback protection
-    "AND,((DST-PORT,7890),(IP-CIDR,127.0.0.0/8,no-resolve)),REJECT",
-    "AND,((DST-PORT,7890),(IP-CIDR,::1/128,no-resolve)),REJECT",
-
-    // 2. Managed VPS / NAT SSH bypass (prevents self-loop deadlock)
+    // 1. Managed VPS / NAT SSH bypass (prevents self-loop deadlock)
     ...serverBypassRules,
 
-    // 3. Private & LAN direct
+    // 2. Private & LAN direct
     "RULE-SET,private_domain,DIRECT",
     "RULE-SET,private_ip,DIRECT,no-resolve",
 
-    // 4. Local-side location reporting guard
+    // 3. Local-side location reporting guard
     "DOMAIN-SUFFIX,locationhistory-pa.googleapis.com,REJECT",
     "DOMAIN-SUFFIX,footprints-pa.googleapis.com,REJECT",
     "DOMAIN-SUFFIX,timeline.google.com,REJECT",
     "DOMAIN-SUFFIX,locationreporting-pa.googleapis.com,REJECT",
 
-    // 5. Fine-grained QUIC (UDP 443): allow CN/Apple/Microsoft, block overseas QUIC to prevent drops
+    // 4. Fine-grained QUIC (UDP 443): allow CN/Apple/Microsoft, block overseas QUIC to prevent drops
     "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,private_domain),(RULE-SET,private_ip,no-resolve),(RULE-SET,cn_domain),(RULE-SET,cn_ip,no-resolve),(RULE-SET,apple_domain),(RULE-SET,microsoft_domain)))))),REJECT",
 
-    // 6. Core AI, Leak-Check & Account Identity (strict landing exit)
+    // 5. Core AI, Leak-Check & Account Identity (strict landing exit)
     "DOMAIN-SUFFIX,ipinfo.io," + EXIT_GROUP,
     "DOMAIN-SUFFIX,ippure.com," + EXIT_GROUP,
     "DOMAIN-SUFFIX,ipure.dev," + EXIT_GROUP,
@@ -304,7 +361,7 @@ function main(config) {
     "RULE-SET,gemini_domain," + AI_GROUP,
     "RULE-SET,ai_domain," + AI_GROUP,
 
-    // 7. Media, Google, Dev, Social
+    // 6. Media, Google, Dev, Social
     "DOMAIN-SUFFIX,googlevideo.com," + MEDIA_GROUP,
     "RULE-SET,youtube_domain," + MEDIA_GROUP,
     "RULE-SET,netflix_domain," + MEDIA_GROUP,
@@ -313,7 +370,7 @@ function main(config) {
     "RULE-SET,telegram_domain," + SOCIAL_GROUP,
     "RULE-SET,telegram_ip," + SOCIAL_GROUP + ",no-resolve",
 
-    // 8. Apple, Microsoft, Overseas-before-CN (avoids ~149 unblocked overseas sites inside cn.mrs), Domestic CN, Fallback
+    // 7. Apple, Microsoft, Overseas-before-CN, Domestic CN, Fallback
     "RULE-SET,apple_domain,DIRECT",
     "RULE-SET,microsoft_domain,DIRECT",
     "RULE-SET,proxy_domain," + FALLBACK_GROUP,
@@ -322,7 +379,7 @@ function main(config) {
     "MATCH," + FALLBACK_GROUP,
   ];
 
-  // 9. Safe SNI sniffer (catches apps bypassing Fake-IP; skips Telegram IPs, Apple Push & managed servers)
+  // 8. Safe SNI sniffer
   config.sniffer = {
     enable: true,
     "force-dns-mapping": true,
@@ -358,7 +415,7 @@ function main(config) {
     ]),
   };
 
-  // 10. Clean encrypted DNS (dns.ipv6=false avoids AAAA fallback stalls while letting dual-stack front hops stay usable)
+  // 9. Clean encrypted DNS (dns.ipv6=false avoids AAAA fallback stalls while keeping dual-stack dialer)
   config.dns = {
     enable: true,
     ipv6: false,
@@ -388,6 +445,8 @@ function main(config) {
       "+.stun.*.*.*",
       "connect.rom.miui.com",
       "connectivitycheck.gstatic.com",
+      "connectivitycheck.platform.hicloud.com",
+      "+.hicloud.com",
       "captive.apple.com",
     ],
   };
