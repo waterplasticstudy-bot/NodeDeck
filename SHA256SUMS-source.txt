@@ -5,7 +5,7 @@
 
 48924fab8b5e1c2da076327b7df212d412038b8916c8a9766e9ab599177686e2  src-tauri/assets/remote_agent.py
 4a80bff0944ae46001643b4ba6659be9b58cf3c1249c812743f1a1e30e018f04  src-tauri/assets/remote_agent_alpine.sh
-3ce22655b6a1cf574d12425dacb014ad960018a448727ad16cdcba2073ba3f88  src-tauri/src/lib.rs
+a643273b2960a89680dbbab631dcdff297719885791626b1aee46c23985ee630  src-tauri/src/lib.rs
 806967cfdb26deb2bc5baa8ab36bfa600fe85ab5863d0d5bf3be30aa8527cc58  src-tauri/src/commands.rs
 d135dc7b47e258812e260428d0fc47423463db02ad1a524db88d5ab7f961b35e  src-tauri/src/config.rs
 8160295e25105df0d3eb031a7a2fc7d36ae488c4b0cb4cc56a508aa831fe062d  src-tauri/src/mihomo.rs

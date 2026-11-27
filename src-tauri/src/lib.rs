@@ -104,12 +104,10 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {
-            has_visible_windows,
+            has_visible_windows: false,
             ..
         } => {
-            if !has_visible_windows {
-                show_main_window(app_handle);
-            }
+            show_main_window(app_handle);
         }
         _ => {}
     });
