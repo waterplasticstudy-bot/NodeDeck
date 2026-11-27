@@ -46,6 +46,7 @@ async function checkAsync(label, fn) {
 function collectFiles(dir, ext) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name === 'vendor') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...collectFiles(full, ext));
     else if (entry.name.endsWith(ext)) out.push(full);
@@ -88,9 +89,12 @@ check('前端源码零原生 alert / confirm / prompt 调用', () => {
   assert.equal(hits.length, 0, `发现原生阻塞弹窗: ${hits.join(', ')}`);
 });
 
-check('所有静态 getElementById(...) 目标 ID 均存在于 index.html 或动态模板中', () => {
+check('所有静态 getElementById(...) 目标 ID 均存在于 HTML 或动态模板中', () => {
   const knownIds = new Set();
-  for (const m of htmlText.matchAll(/\bid="([^"]+)"/g)) knownIds.add(m[1]);
+  for (const hfile of collectFiles(SRC_DIR, '.html')) {
+    const htxt = fs.readFileSync(hfile, 'utf8');
+    for (const m of htxt.matchAll(/\bid="([^"]+)"/g)) knownIds.add(m[1]);
+  }
   for (const file of jsFiles) {
     const text = fs.readFileSync(file, 'utf8');
     for (const m of text.matchAll(/\bid="([A-Za-z0-9_-]+)"/g)) knownIds.add(m[1]);
@@ -130,6 +134,23 @@ check('所有前端 invokeCmd(...) 均已在 Rust lib.rs 注册且在 demo-mock.
   }
   assert.equal(missingRust.length, 0, `未在 Rust 注册的命令:\n${missingRust.join('\n')}`);
   assert.equal(missingDemo.length, 0, `未在 demo-mock.js 覆盖的命令:\n${missingDemo.join('\n')}`);
+});
+
+check('确认弹窗始终位于顶层且禁止在 await confirmDialog 后读取失效的 ev.currentTarget', () => {
+  const cssText = fs.readFileSync(path.join(SRC_DIR, 'styles', 'components.css'), 'utf8');
+  assert.match(cssText, /#confirmModal\s*\{[^}]*z-index:\s*950/, 'confirmModal 必须设置高于普通模态框的 z-index');
+  const confirmPos = htmlText.indexOf('id="confirmModal"');
+  const accModalPos = htmlText.indexOf('id="accountEditModal"');
+  const expModalPos = htmlText.indexOf('id="clientExportModal"');
+  assert.ok(confirmPos > accModalPos && confirmPos > expModalPos, 'confirmModal 在 DOM 中应挂载在普通模态框之后');
+  const badHits = [];
+  for (const file of jsFiles) {
+    const text = fs.readFileSync(file, 'utf8');
+    if (/await\s+confirmDialog\([\s\S]{0,420}?withButtonLoading\(\s*ev\.currentTarget/.test(text)) {
+      badHits.push(path.relative(ROOT, file));
+    }
+  }
+  assert.equal(badHits.length, 0, `检测到 await confirmDialog 后使用失效 ev.currentTarget: ${badHits.join(', ')}`);
 });
 
 check('开源仓库无残留 __pycache__ / exports / 个人 config.json', () => {
@@ -301,6 +322,119 @@ check('v1.2.0 DIY 自由定制：落地出口备选 3 模式 + 省流分流 + �
   assert.ok(out.rules.includes('DOMAIN-SUFFIX,custom-ai.example.com,落地出口'));
 });
 
+check('自定义 APP 专属分流与防风控护栏（Bybit 自动避美/港/新、YAML & JS 独立策略组、优先级与进程模式）', () => {
+  const sampleUsVps = {
+    key: 'vps::vless::me',
+    nodeName: 'Demo-US-VPS',
+    region: 'US',
+    proto: 'vless',
+    host: '198.51.100.55',
+    port: 8443,
+    username: 'me',
+    credential: '11111111-4444-4aaa-8bbb-000000000002',
+    sni: 'www.microsoft.com',
+    publicKey: 'DemoPublicKeyX25519Placeholder1234567890ABCD',
+    shortId: 'a1b2c3d4',
+  };
+  const jpWithKey = { ...sampleLandingJp, key: 'nat_jp::ss::jp', region: 'JP' };
+  const krWithKey = { ...sampleLandingKr, key: 'nat_kr::vless::kr', region: 'KR' };
+  const allThree = [sampleUsVps, jpWithKey, krWithKey];
+
+  // 1) 预设创建 Bybit 时必须自动排除 US 节点，仅保留安全节点 (JP/KR)
+  const bybitRoute = clientExport.createAppRouteFromPreset('bybit', allThree);
+  assert.ok(bybitRoute, '应找到 bybit 预设');
+  assert.ok(!bybitRoute.landingKeys.includes(sampleUsVps.key), 'Bybit 不应自动绑定 US 节点');
+  assert.ok(bybitRoute.landingKeys.includes(jpWithKey.key), 'Bybit 应自动绑定 JP 节点');
+  assert.ok(bybitRoute.landingKeys.includes(krWithKey.key), 'Bybit 应自动绑定 KR 节点');
+
+  // 2) 故意把 Bybit 绑定到 US 节点时，必须触发风控预警
+  const riskyCheck = clientExport.validateExportDraft(allThree, {
+    format: 'all_platform_yaml',
+    frontSubUrl: 'https://example.com/sub?token=demo_token_only',
+    appRoutes: [{ ...bybitRoute, landingKeys: [sampleUsVps.key], fallbackRegions: ['US'] }],
+  });
+  assert.equal(riskyCheck.ok, true);
+  assert.ok(riskyCheck.warnings.some((w) => w.includes('风控预警') && w.includes('Bybit')), '绑定 US 节点必须弹出 Bybit 风控预警');
+
+  // 3) 绑定纯安全节点（JP/KR NAT + JP/KR/TW 备选）+ 自定义 APP（仅自建锁死，不混机场）+ 快捷模式
+  const lockedCustom = {
+    id: 'app_custom_broker',
+    name: '自定义券商',
+    icon: '🏦',
+    domains: ['broker.example.com'],
+    keywords: ['brokerx'],
+    processes: ['BrokerApp.exe'],
+    targetMode: 'custom_group',
+    landingKeys: [jpWithKey.key],
+    fallbackRegions: [],
+    blockedRegions: [],
+  };
+  const jmAirport = clientExport.createAppRouteFromPreset('jmcomic', allThree);
+  const safeCheck = clientExport.validateExportDraft(allThree, {
+    format: 'all_platform_yaml',
+    frontSubUrl: 'https://example.com/sub?token=demo_token_only',
+    appRoutes: [bybitRoute, lockedCustom, jmAirport],
+  });
+  assert.equal(safeCheck.ok, true);
+  assert.equal(safeCheck.appRouteCount, 3);
+  assert.ok(!safeCheck.warnings.some((w) => w.includes('风控预警')), '安全日韩台绑定不应误报风控预警');
+
+  // 4) 全平台 YAML 输出检查：独立策略组、规则排在 AI/Google 之前、含进程规则时自动启用 strict
+  const yamlApp = clientExport.buildAllPlatformYaml(allThree, {
+    frontSubUrl: 'https://example.com/sub?token=demo_token_only',
+    appRoutes: [bybitRoute, lockedCustom, jmAirport],
+  });
+  assert.match(yamlApp, /find-process-mode: strict/);
+  assert.match(yamlApp, /- name: "🟡 Bybit"/);
+  assert.match(yamlApp, /- name: "🏦 自定义券商"/);
+  const bybitIdx = yamlApp.indexOf('DOMAIN-SUFFIX,bybit.com,🟡 Bybit');
+  const aiIdx = yamlApp.indexOf('DOMAIN-SUFFIX,openai.com,🤖 AI 服务');
+  assert.ok(bybitIdx > 0 && aiIdx > bybitIdx, 'APP 专属规则必须优先于通用/AI 规则');
+  assert.match(yamlApp, /PROCESS-NAME,BrokerApp\.exe,🏦 自定义券商/);
+  assert.match(yamlApp, /DOMAIN-KEYWORD,jmcomic,🚀 机场直出/);
+  const brokerBlock = yamlApp.slice(yamlApp.indexOf('- name: "🏦 自定义券商"'), yamlApp.indexOf('- name: "🤖 AI 服务"'));
+  assert.ok(!brokerBlock.includes('use:'), '未选备选国家时自定义 APP 策略组不得混入机场节点');
+
+  // 5) Bettbox JS VM 实跑验证：🟡 Bybit 策略组绝对不含美国/香港/新加坡节点
+  const jsApp = clientExport.buildBettboxUniversalJs(allThree, {
+    appRoutes: [bybitRoute, lockedCustom, jmAirport],
+  });
+  const appCtx = {};
+  vm.createContext(appCtx);
+  vm.runInContext(`${jsApp}\nthis.__main = main;`, appCtx);
+  const appOut = appCtx.__main({
+    proxies: [
+      { name: '🇺🇸 美国 洛杉矶 1x', type: 'vless', server: '198.51.100.1', port: 443 },
+      { name: '🇭🇰 香港 1x', type: 'vless', server: '198.51.100.2', port: 443 },
+      { name: '🇸🇬 新加坡 1x', type: 'vless', server: '198.51.100.3', port: 443 },
+      { name: '🇯🇵 日本 东京 1x', type: 'vless', server: '198.51.100.4', port: 443 },
+      { name: '🇹🇼 台湾 台北 1x', type: 'vless', server: '198.51.100.5', port: 443 },
+      { name: '🇰🇷 韩国 首尔 1x', type: 'vless', server: '198.51.100.6', port: 443 },
+    ],
+    'proxy-groups': [],
+    rules: [],
+  });
+  const bybitGrp = appOut['proxy-groups'].find((g) => g.name === '🟡 Bybit');
+  const brokerGrp = appOut['proxy-groups'].find((g) => g.name === '🏦 自定义券商');
+  assert.ok(bybitGrp, 'JS 输出应包含 🟡 Bybit 策略组');
+  assert.ok(bybitGrp.proxies.includes('落地-JP-Demo-NAT(链式)'));
+  assert.ok(bybitGrp.proxies.includes('🇯🇵 日本 东京 1x') && bybitGrp.proxies.includes('🇹🇼 台湾 台北 1x'));
+  assert.ok(!bybitGrp.proxies.includes('落地-Demo-US-VPS(链式)'), '🟡 Bybit 严禁混入美国自建 VPS');
+  assert.ok(!bybitGrp.proxies.includes('🇺🇸 美国 洛杉矶 1x'), '🟡 Bybit 严禁混入美国机场节点');
+  assert.ok(!bybitGrp.proxies.includes('🇭🇰 香港 1x'), '🟡 Bybit 严禁混入香港机场节点');
+  assert.ok(!bybitGrp.proxies.includes('🇸🇬 新加坡 1x'), '🟡 Bybit 严禁混入新加坡机场节点');
+  assert.deepEqual(Array.from(brokerGrp.proxies), ['落地-JP-Demo-NAT(链式)'], '仅锁自建节点时自定义 APP 策略组应严格纯净');
+  assert.equal(appOut['find-process-mode'], 'strict');
+  assert.ok(appOut.rules.includes('DOMAIN-SUFFIX,bybit.com,🟡 Bybit'));
+  assert.ok(appOut.rules.includes('DOMAIN-SUFFIX,byd3c3.com,🟡 Bybit'), '必须拦截 Bybit 轮换域名 byd3c3.com');
+  assert.ok(appOut.rules.includes('DOMAIN-KEYWORD,bybit,🟡 Bybit'));
+  assert.ok(appOut.rules.includes('RULE-SET,app_bybit,🟡 Bybit'), '应挂载官方每日更新 geosite/bybit.mrs');
+  assert.ok(appOut['rule-providers'].app_bybit?.url.endsWith('geosite/bybit.mrs'));
+  assert.match(yamlApp, /DOMAIN-SUFFIX,byd3c3\.com,🟡 Bybit/);
+  assert.match(yamlApp, /RULE-SET,app_bybit,🟡 Bybit/);
+  assert.match(yamlApp, /geosite\/bybit\.mrs/);
+});
+
 check('Bettbox 覆写 JS 在 VM 沙箱实跑通过，高倍率过滤精准放行 <=1x 且剔除 >1x', () => {
   const jsCode = clientExport.buildBettboxUniversalJs([sampleLandingJp, sampleLandingKr], {
     excludeHighMult: true,
@@ -382,6 +516,57 @@ await checkAsync('Demo Mock 核心指令（含 v1.1.0 整组测速与导出预�
   const allUsers = await demoMod.demoInvoke('get_all_nodes_users');
   assert.equal(allUsers.ok, true);
   assert.equal(allUsers.nodes[0].region, 'US');
+
+  // v1.3.0: 持久化账本、配额与远端隧道面板演示命令回归
+  const qRes = await demoMod.demoInvoke('save_member_quota', { nodeId: 'vps_main', username: 'Alice', quotaGb: 250 });
+  assert.equal(qRes.ok, true);
+  assert.equal(qRes.memberQuotasGb['vps_main::Alice'], 250);
+  const lRes = await demoMod.demoInvoke('manage_node_ledger', { nodeId: 'vps_main', action: 'reset_user', username: 'Alice', scope: 'all' });
+  assert.equal(lRes.ok, true);
+  const pRes = await demoMod.demoInvoke('open_remote_singbox_panel', { nodeId: 'vps_main', theme: 'light' });
+  assert.equal(pRes.ok, true);
+  const pollRes = await demoMod.demoInvoke('poll_remote_singbox_panel', { nodeId: 'vps_main', includeRules: true });
+  assert.equal(pollRes.ok, true);
+
+  // v1.4.0: 交互终端 PTY 与快捷命令持久化演示回归
+  const snipRes = await demoMod.demoInvoke('save_terminal_snippets', {
+    snippets: [{ id: 's1', title: 'sb 面板', command: 'sb', scope: 'all' }],
+  });
+  assert.equal(snipRes.ok, true);
+  assert.equal(snipRes.terminalSnippets.length, 1);
+  const ptyRes = await demoMod.demoInvoke('pty_open', { nodeId: 'vps_main', cols: 110, rows: 30 });
+  assert.equal(ptyRes.ok, true);
+  assert.ok(ptyRes.sessionId);
+  assert.equal((await demoMod.demoInvoke('pty_write', { sessionId: ptyRes.sessionId, data: 'sb\r' })).ok, true);
+  assert.equal((await demoMod.demoInvoke('pty_resize', { sessionId: ptyRes.sessionId, cols: 120, rows: 36 })).ok, true);
+  assert.equal((await demoMod.demoInvoke('pty_close', { sessionId: ptyRes.sessionId })).ok, true);
+});
+
+check('v1.3.0: SS-2022 EIH 多用户链接/YAML 拼装与根域名提取器回归', () => {
+  assert.equal(formatMod.extractRootDomain('ws2.byd3c3.com'), 'byd3c3.com');
+  assert.equal(formatMod.extractRootDomain('api.sub.example.co.uk:443'), 'example.co.uk');
+  assert.equal(formatMod.extractRootDomain('203.0.113.21'), '');
+  assert.equal(formatMod.extractRootDomain(''), '');
+
+  const eihPass = 'AAAAAAAAAAAAAAAAAAAAAA==:BBBBBBBBBBBBBBBBBBBBBB==';
+  const ssInb = {
+    tag: 'ss2022-demo',
+    type: 'shadowsocks',
+    listenPort: 25000,
+    method: '2022-blake3-aes-128-gcm',
+    password: 'AAAAAAAAAAAAAAAAAAAAAA==',
+    usersDetail: [{ name: 'DemoUserA', username: 'DemoUserA', password: eihPass, userPassword: 'BBBBBBBBBBBBBBBBBBBBBB==' }],
+  };
+  const ssLink = formatMod.buildStandardNodeLink(ssInb, '203.0.113.21', '', 'DemoNAT', ssInb.usersDetail[0]);
+  assert.ok(ssLink.startsWith('ss://'), '应生成标准 ss:// 链接');
+  const b64Part = ssLink.slice(5, ssLink.indexOf('@')).replace(/-/g, '+').replace(/_/g, '/');
+  const decoded = Buffer.from(b64Part, 'base64').toString('utf8');
+  assert.equal(decoded, `2022-blake3-aes-128-gcm:${eihPass}`);
+
+  const ssYaml = formatMod.buildMihomoYaml(ssInb, '203.0.113.21', '', 'DemoNAT', ssInb.usersDetail[0], '前置代理');
+  assert.match(ssYaml, /type:\s*ss/);
+  assert.match(ssYaml, /cipher:\s*"2022-blake3-aes-128-gcm"/);
+  assert.ok(ssYaml.includes(`password: "${eihPass}"`), 'Mihomo YAML 必须完整保留 server_psk:user_psk');
 });
 
 console.log('\n=== [3/4] 离线 QR Code ISO/IEC 18004 全链路解码闭环验证 ===');
@@ -638,10 +823,10 @@ check('仪表盘流量识别脚本精确匹配 A/B 配额、免疫图表小计�
   assert.equal(natTraffic.percent, 0.4);
   assert.equal(natTraffic.cycleText, '11-01 ~ 12-01');
 
-  // 2) NAT 信息页：只有「内存 (含页面缓存) 36 MB / 128 MB」，必须拒抓并提示 hasTrafficTab=true
+  // 2) NAT 信息页：含「内存 33 MB / 128 MB」「到期日期」「本月流量 385.43 MB（无总配额）」，必须拒抓并提示 hasTrafficTab=true
   const natInfo = runScrape({
-    bodyText: '基本信息\n实例 ID 85\n资源占用\nCPU 15%\n内存 (含页面缓存)\n36 MB / 128 MB (28%)',
-    elements: ['内存 (含页面缓存) 36 MB / 128 MB (28%)'],
+    bodyText: '到期日期\n2026-12-22\n剩余时间\n25 天\n基本信息\n实例 ID 85\n资源占用\nCPU 15%\n内存 (含页面缓存)\n33 MB / 128 MB (26%)\n本月流量\n385.43 MB',
+    elements: ['到期日期 2026-12-22', '剩余时间 25 天', '内存 (含页面缓存) 33 MB / 128 MB (26%)', '本月流量 385.43 MB'],
     tabs: ['信息', '网络', '流量', '日志', '配置'],
   });
   assert.equal(natInfo.status, 'not_found');
@@ -656,6 +841,17 @@ check('仪表盘流量识别脚本精确匹配 A/B 配额、免疫图表小计�
   assert.equal(splitCards.usedText, '44.3 GB');
   assert.equal(splitCards.expiresAt, '2026-12-23');
   assert.ok(splitCards.totalBytes > 2.9 * 1024 ** 4, '应正确叠加推导 ~3000 GB 总额');
+
+  // 4) 隐藏窗口 textContent 无换行兜底场景（即使同页其他区域出现 CPU/内存 词样也不误杀真实流量配对）
+  const noNewlineTraffic = runScrape({
+    bodyText: 'CPU 15% 内存 33 MB / 128 MB 其他内容'.padEnd(200, ' ') + '本月流量 (11-01 ~ 12-01) 正常 已使用 385.43 MB / 100.00 GB 0.4% 每月1号重置流量',
+    elements: [],
+    tabs: ['信息', '网络', '流量', '日志', '配置'],
+  });
+  assert.equal(noNewlineTraffic.status, 'ok');
+  assert.equal(noNewlineTraffic.usedText, '385.43 MB');
+  assert.equal(noNewlineTraffic.totalText, '100.00 GB');
+  assert.equal(noNewlineTraffic.percent, 0.4);
 });
 
 console.log('\n=== [4/4] 开源仓库隐私防泄漏扫描 ===');

@@ -9,11 +9,13 @@ mod config;
 mod constants;
 mod mihomo;
 mod ssh_client;
+mod terminal;
 mod tray;
+mod tunnel;
 
 use commands::AppState;
 use config::load_config;
-use constants::MAIN_WINDOW_LABEL;
+use constants::{MAIN_WINDOW_LABEL, SINGBOX_PANEL_WINDOW_PREFIX};
 use tauri::{Manager, RunEvent, WindowEvent};
 use tray::{setup_tray, show_main_window};
 
@@ -30,6 +32,11 @@ pub fn run() {
             commands::save_nat_nodes,
             commands::save_provider_accounts,
             commands::save_export_presets,
+            commands::save_terminal_snippets,
+            commands::pty_open,
+            commands::pty_write,
+            commands::pty_resize,
+            commands::pty_close,
             commands::launch_ssh_wizard,
             commands::get_overview,
             commands::get_users,
@@ -56,6 +63,12 @@ pub fn run() {
             commands::get_nat_alpine_audit,
             commands::configure_nat_alpine_audit,
             commands::close_nat_alpine_conn,
+            commands::manage_node_ledger,
+            commands::save_member_quota,
+            commands::open_remote_singbox_panel,
+            commands::poll_remote_singbox_panel,
+            commands::close_remote_singbox_panel,
+            commands::close_remote_singbox_panel_conn,
             commands::get_nat_exit_status,
             commands::get_nat_exit_latency,
             commands::switch_nat_exit_cmd,
@@ -84,13 +97,22 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 仅主窗口拦截关闭收进托盘；多账号隔离窗口正常关闭释放资源
-            if window.label() == MAIN_WINDOW_LABEL {
+            // 仅主窗口拦截关闭收进托盘；远端 sing-box 面板关闭时自动回收加密 SSH 隧道
+            let label = window.label().to_string();
+            if label == MAIN_WINDOW_LABEL {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     if load_config().close_to_tray {
                         api.prevent_close();
                         let _ = window.hide();
                     }
+                }
+            } else if label.starts_with(SINGBOX_PANEL_WINDOW_PREFIX) {
+                if let WindowEvent::Destroyed = event {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<AppState>();
+                        state.tunnels.close_by_window_label(&label).await;
+                    });
                 }
             }
         })
@@ -100,7 +122,11 @@ pub fn run() {
     app.run(|app_handle, event| match event {
         RunEvent::Exit => {
             let state = app_handle.state::<AppState>();
-            tauri::async_runtime::block_on(state.ssh.reset());
+            state.terminal.close_all();
+            tauri::async_runtime::block_on(async {
+                state.tunnels.close_all().await;
+                state.ssh.reset().await;
+            });
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {

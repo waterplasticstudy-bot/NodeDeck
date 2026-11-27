@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NodeDeck · 远端 sing-box 实时面板</title>
+  <link rel="stylesheet" href="./styles/tokens.css" />
+  <link rel="stylesheet" href="./styles/layout.css" />
+  <link rel="stylesheet" href="./styles/components.css" />
+  <style>
+    body { display: block; padding: 18px 22px; overflow-y: auto; }
+    .rp-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .rp-title { font-size: 18px; font-weight: 700; margin: 0; }
+    .rp-spark { width: 100%; height: 110px; display: block; }
+    .rp-table-wrap { max-height: 46vh; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="rp-head">
+    <div>
+      <h2 class="rp-title" id="rpNodeTitle">📊 远端 sing-box 实时面板</h2>
+      <div class="status-strip mt-xs">
+        <span class="chip"><span class="dot ok" id="rpDot"></span><span id="rpTunnelBadge">🔒 SSH 加密回环隧道连接中...</span></span>
+        <span class="chip mono" id="rpVersionChip">sing-box --</span>
+        <span class="chip num" id="rpSyncChip">--</span>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="seg" id="rpTabSeg">
+        <button data-rp-tab="conns" class="active">⚡ 实时连接</button>
+        <button data-rp-tab="rules">📜 远端规则</button>
+      </div>
+      <button class="btn sm" id="rpPauseBtn">⏸️ 暂停</button>
+      <button class="btn sm" id="rpCopyConnBtn" title="复制本地隧道地址与密钥（可供 Zashboard / MetaCubeXD 外部直连）">📋 复制隧道地址</button>
+      <button class="btn sm danger" id="rpCloseBtn">🔌 断开关闭</button>
+    </div>
+  </div>
+
+  <div class="grid-4 mb-md">
+    <div class="card">
+      <div class="card-label">实时速率 (↑ / ↓)</div>
+      <div class="hero-num num" style="font-size:20px;" id="rpSpeedVal">--</div>
+      <div class="sub-note num" id="rpSpeedSub">每 1.5 秒隧道直采</div>
+    </div>
+    <div class="card">
+      <div class="card-label">进程累计流量</div>
+      <div class="hero-num num" style="font-size:20px;" id="rpTotalVal">--</div>
+      <div class="sub-note num" id="rpTotalSub">↑ -- / ↓ --</div>
+    </div>
+    <div class="card">
+      <div class="card-label">当前活跃连接</div>
+      <div class="hero-num num" style="font-size:20px;" id="rpConnNum">--</div>
+      <div class="sub-note" id="rpUserCountSub">按成员实时聚合</div>
+    </div>
+    <div class="card">
+      <div class="card-label">sing-box 内存</div>
+      <div class="hero-num num" style="font-size:20px;" id="rpMemVal">--</div>
+      <div class="sub-note">零公网端口暴露</div>
+    </div>
+  </div>
+
+  <div class="card mb-md">
+    <div class="card-head mb-xs">
+      <strong style="font-size:13px;">实时吞吐趋势（仅本机 127.0.0.1 加密隧道采集）</strong>
+      <div class="chart-legend num">
+        <span class="legend-item"><span class="legend-dot tx"></span>上传 <strong id="rpUpLeg">--</strong></span>
+        <span class="legend-item"><span class="legend-dot rx"></span>下载 <strong id="rpDownLeg">--</strong></span>
+      </div>
+    </div>
+    <svg class="rp-spark" id="rpSparkSvg" viewBox="0 0 600 110" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div id="rpConnsPane" class="card">
+    <div class="card-head mb-sm">
+      <div class="row-inline" style="flex-wrap:wrap;gap:6px;" id="rpUserChips"></div>
+      <div class="toolbar">
+        <input class="input w-search" id="rpSearch" placeholder="搜索成员 / 域名 / 来源 IP..." />
+        <button class="btn sm danger" id="rpKillAllBtn">断开全部</button>
+      </div>
+    </div>
+    <div class="table-wrap rp-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>成员</th>
+            <th>来源 IP</th>
+            <th>目标地址</th>
+            <th>协议</th>
+            <th>命中规则</th>
+            <th>流量 (↑/↓)</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="rpConnBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="rpRulesPane" class="card hidden">
+    <div class="card-head mb-sm">
+      <strong style="font-size:14px;">远端 sing-box 生效规则</strong>
+      <span class="pill blue num" id="rpRuleCount">0 条</span>
+    </div>
+    <div class="table-wrap rp-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:60px;">#</th>
+            <th style="width:160px;">类型</th>
+            <th>条件载荷</th>
+            <th style="width:140px;">出站/动作</th>
+          </tr>
+        </thead>
+        <tbody id="rpRulesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="./remote-panel.js"></script>
+</body>
+</html>

@@ -22,6 +22,7 @@ export const MEMBER_COLORS = [
 export const TAB_TITLES = {
   overview: '节点总览',
   mihomo: '本机 Mihomo · 全链路与分流',
+  terminal: '交互式 SSH 终端与 sing-box 脚本',
   singbox: 'sing-box 节点与协议管理',
   audit: '成员流量与在线监控',
   users: '全节点用户与门禁',

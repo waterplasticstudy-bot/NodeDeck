@@ -50,6 +50,106 @@ fn validate_safe_extra(raw: &str) -> Result<(), SshError> {
     Ok(())
 }
 
+fn is_idempotent_alpine_action(action: &str) -> bool {
+    matches!(
+        action,
+        "overview"
+            | "config"
+            | "config_bundle"
+            | "audit"
+            | "audit_bundle"
+            | "clash_info"
+            | "backups"
+            | "logs"
+            | "check"
+            | "ports"
+            | "exit_status"
+            | "exit_latency"
+    )
+}
+
+fn is_transient_alpine_ssh_err(err: &SshError) -> bool {
+    if err.code == "SSH_TIMEOUT" {
+        return true;
+    }
+    let lower = err.error.to_ascii_lowercase();
+    lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("connection closed")
+        || lower.contains("closed by remote host")
+        || lower.contains("timed out")
+        || lower.contains("kex_exchange_identification")
+        || lower.contains("unexpected eof")
+        || lower.contains("network is unreachable")
+}
+
+async fn exec_alpine_script_once(
+    key_file: &std::path::Path,
+    ssh_port: u16,
+    user: &str,
+    public_ip: &str,
+    remote_sh: &str,
+    timeout_ms: u64,
+) -> Result<(String, u64), SshError> {
+    let mut cmd = Command::new(get_ssh_bin());
+    cmd.args([
+        "-T",
+        "-i",
+        &key_file.to_string_lossy(),
+        "-p",
+        &ssh_port.to_string(),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        &format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "LogLevel=ERROR",
+        &format!("{user}@{public_ip}"),
+        remote_sh,
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let started = Instant::now();
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| SshError::new("SSH_ERROR", format!("无法启动 ssh 进程: {e}"), None))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(ALPINE_AGENT_SH.as_bytes()).await;
+        let _ = stdin.shutdown().await;
+    }
+
+    let output = timeout(Duration::from_millis(timeout_ms), child.wait_with_output())
+        .await
+        .map_err(|_| SshError::new("SSH_TIMEOUT", "连接 NAT SSH 超时，请检查端口映射或远端响应", None))?
+        .map_err(|e| SshError::new("SSH_ERROR", format!("读取 NAT SSH 输出失败: {e}"), None))?;
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if !output.status.success() {
+        let msg = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("远端命令返回非零状态 ({})", output.status)
+        };
+        return Err(SshError::new("ALPINE_SSH_ERR", msg, None));
+    }
+
+    Ok((stdout, elapsed_ms))
+}
+
 pub(crate) async fn exec_alpine_script_timeout(
     node: &NatNodeConfig,
     fallback_key_path: &str,
@@ -93,64 +193,16 @@ pub(crate) async fn exec_alpine_script_timeout(
         Some(arg) => format!("sh -s -- {action} '{cfg_path}' '{arg}'"),
         None => format!("sh -s -- {action} '{cfg_path}'"),
     };
+    let public_ip = node.public_ip.trim();
 
-    let mut cmd = Command::new(get_ssh_bin());
-    cmd.args([
-        "-T",
-        "-i",
-        &key_file.to_string_lossy(),
-        "-p",
-        &node.ssh_port.to_string(),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        &format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        "LogLevel=ERROR",
-        &format!("{user}@{}", node.public_ip.trim()),
-        &remote_sh,
-    ])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
-
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    let started = Instant::now();
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| SshError::new("SSH_ERROR", format!("无法启动 ssh 进程: {e}"), None))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(ALPINE_AGENT_SH.as_bytes()).await;
-        let _ = stdin.shutdown().await;
+    match exec_alpine_script_once(&key_file, node.ssh_port, user, public_ip, &remote_sh, timeout_ms).await {
+        Ok(res) => Ok(res),
+        Err(err) if is_idempotent_alpine_action(action) && is_transient_alpine_ssh_err(&err) => {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            exec_alpine_script_once(&key_file, node.ssh_port, user, public_ip, &remote_sh, timeout_ms).await
+        }
+        Err(err) => Err(err),
     }
-
-    let output = timeout(Duration::from_millis(timeout_ms), child.wait_with_output())
-        .await
-        .map_err(|_| SshError::new("SSH_TIMEOUT", "连接 NAT SSH 超时，请检查端口映射或远端响应", None))?
-        .map_err(|e| SshError::new("SSH_ERROR", format!("读取 NAT SSH 输出失败: {e}"), None))?;
-
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-    if !output.status.success() {
-        let msg = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
-        } else {
-            format!("远端命令返回非零状态 ({})", output.status)
-        };
-        return Err(SshError::new("ALPINE_SSH_ERR", msg, None));
-    }
-
-    Ok((stdout, elapsed_ms))
 }
 
 pub(crate) async fn exec_alpine_script(

@@ -167,6 +167,16 @@ extract_clash_field() {
   ' "$SB_CFG" 2>/dev/null
 }
 
+if [ "$ACTION" = "clash_info" ]; then
+  if [ ! -f "$SB_CFG" ]; then
+    echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2
+    exit 1
+  fi
+  echo "ADDR=$(extract_clash_field "external_controller")"
+  echo "SECRET=$(extract_clash_field "secret")"
+  exit 0
+fi
+
 if [ "$ACTION" = "audit_bundle" ]; then
   if [ ! -f "$SB_CFG" ]; then
     echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2
@@ -182,6 +192,352 @@ if [ "$ACTION" = "audit_bundle" ]; then
     else
       curl -fsS --max-time 4 "http://${ADDR}/connections" 2>/dev/null || echo "{}"
     fi
+  fi
+  printf '\n===NODEDECK_LEDGER===\n'
+  L_INST="false"
+  L_ACT="false"
+  [ -x /usr/local/bin/nodedeck-ledger.sh ] && [ -x /etc/init.d/nodedeck-ledger ] && L_INST="true"
+  if command -v rc-service >/dev/null 2>&1 && rc-service nodedeck-ledger status >/dev/null 2>&1; then
+    L_ACT="true"
+  elif [ -f /run/nodedeck-ledger.pid ] && kill -0 "$(cat /run/nodedeck-ledger.pid 2>/dev/null)" 2>/dev/null; then
+    L_ACT="true"
+  fi
+  echo "INSTALLED=$L_INST"
+  echo "ACTIVE=$L_ACT"
+  printf '\n===NODEDECK_LEDGER_JSON===\n'
+  LEDGER_JSON="${SB_DIR}/traffic_ledger.json"
+  if [ -f "$LEDGER_JSON" ]; then
+    cat "$LEDGER_JSON"
+  else
+    echo "{}"
+  fi
+  exit 0
+fi
+
+if [ "$ACTION" = "ledger_install" ]; then
+  [ ! -f "$SB_CFG" ] && echo "ERROR: 配置文件不存在 ($SB_CFG)" >&2 && exit 1
+  ADDR=$(extract_clash_field "external_controller")
+  [ -z "$ADDR" ] && echo "ERROR: 请先开启该 NAT 的 127.0.0.1 本地统计接口" >&2 && exit 1
+  mkdir -p /usr/local/bin /etc/init.d /run 2>/dev/null || true
+
+  cat <<'NODEDECK_LEDGER_EOF' > /usr/local/bin/nodedeck-ledger.sh
+#!/bin/sh
+SB_CFG="${1:-/usr/local/etc/sing-box/config.json}"
+SB_DIR=$(dirname "$SB_CFG")
+TSV="${SB_DIR}/.nodedeck_ledger.tsv"
+META="${SB_DIR}/.nodedeck_ledger.meta"
+JSON="${SB_DIR}/traffic_ledger.json"
+PREV="/run/nodedeck-ledger.prev"
+CUR_FILE="/run/nodedeck-ledger.cur"
+POLL_SEC=10
+FLUSH_TICKS=3
+
+mkdir -p /run 2>/dev/null || true
+
+extract_clash_field() {
+  awk -v key="$1" '
+    /"clash_api"/ { in_ca=1 }
+    in_ca && $0 ~ ("\"" key "\"") {
+      line=$0
+      sub(".*\"" key "\"[ \t]*:[ \t]*\"", "", line)
+      sub("\".*", "", line)
+      print line
+      exit
+    }
+    in_ca && /}/ { in_ca=0 }
+  ' "$SB_CFG" 2>/dev/null
+}
+
+write_json() {
+  NOW_TS=$(date +%s)
+  CUR_DAY=$(date +%Y-%m-%d)
+  CUR_MON=$(date +%Y-%m)
+  TMP="${JSON}.tmp"
+  awk -F'\t' -v now="$NOW_TS" -v day="$CUR_DAY" -v mon="$CUR_MON" '
+    function jesc(s) {
+      gsub(/\\/, "\\\\", s)
+      gsub(/"/, "\\\"", s)
+      return s
+    }
+    BEGIN {
+      printf "{\"version\":1,\"updatedAt\":%s,\"day\":\"%s\",\"month\":\"%s\",\"users\":{", now, day, mon
+      first = 1
+    }
+    NF >= 7 && $1 != "" {
+      if (!first) printf ","
+      first = 0
+      printf "\"%s\":{\"todayUp\":%.0f,\"todayDown\":%.0f,\"monthUp\":%.0f,\"monthDown\":%.0f,\"totalUp\":%.0f,\"totalDown\":%.0f}",
+        jesc($1), $2+0, $3+0, $4+0, $5+0, $6+0, $7+0
+    }
+    END { printf "}}\n" }
+  ' "$TSV" > "$TMP" 2>/dev/null && chmod 600 "$TMP" 2>/dev/null && mv -f "$TMP" "$JSON"
+  printf '%s\t%s\t%s\n' "$CUR_DAY" "$CUR_MON" "$NOW_TS" > "${META}.tmp" && mv -f "${META}.tmp" "$META"
+}
+
+trap 'write_json; exit 0' TERM INT
+
+[ -f "$TSV" ] || : > "$TSV"
+chmod 600 "$TSV" 2>/dev/null || true
+
+SEED_ONLY=0
+if [ -f "$META" ]; then
+  LAST_TS=$(awk -F'\t' 'NR==1{print $3+0}' "$META" 2>/dev/null)
+  NOW_BOOT=$(date +%s)
+  if [ -n "$LAST_TS" ] && [ $((NOW_BOOT - LAST_TS)) -lt 120 ] && [ $((NOW_BOOT - LAST_TS)) -ge 0 ]; then
+    SEED_ONLY=1
+  fi
+fi
+: > "$PREV"
+write_json
+
+SINCE_FLUSH=3
+DIRTY=0
+while true; do
+  ADDR=$(extract_clash_field "external_controller")
+  SEC=$(extract_clash_field "secret")
+  CUR_DAY=$(date +%Y-%m-%d)
+  CUR_MON=$(date +%Y-%m)
+  PREV_DAY=$(awk -F'\t' 'NR==1{print $1}' "$META" 2>/dev/null)
+  PREV_MON=$(awk -F'\t' 'NR==1{print $2}' "$META" 2>/dev/null)
+
+  if [ -n "$PREV_DAY" ] && [ "$PREV_DAY" != "$CUR_DAY" ]; then
+    RESET_MON=0
+    [ "$PREV_MON" != "$CUR_MON" ] && RESET_MON=1
+    awk -F'\t' -v OFS='\t' -v reset_mon="$RESET_MON" '
+      NF >= 7 {
+        $2=0; $3=0
+        if (reset_mon == 1) { $4=0; $5=0 }
+        print $1,$2,$3,$4,$5,$6,$7
+      }
+    ' "$TSV" > "${TSV}.tmp" && mv -f "${TSV}.tmp" "$TSV"
+    write_json
+    DIRTY=0
+    SINCE_FLUSH=0
+  fi
+
+  if [ -n "$ADDR" ] && command -v curl >/dev/null 2>&1; then
+    if [ -n "$SEC" ]; then
+      BODY=$(curl -fsS --max-time 4 -H "Authorization: Bearer $SEC" "http://${ADDR}/connections" 2>/dev/null)
+    else
+      BODY=$(curl -fsS --max-time 4 "http://${ADDR}/connections" 2>/dev/null)
+    fi
+    if [ -n "$BODY" ]; then
+      printf '%s\n' "$BODY" | awk '
+        function jstr(src, key,   p, r, q) {
+          p = index(src, "\"" key "\":\"")
+          if (p == 0) return ""
+          r = substr(src, p + length(key) + 4)
+          q = index(r, "\"")
+          if (q <= 1) return ""
+          return substr(r, 1, q - 1)
+        }
+        function jnum(src, key,   p, r) {
+          p = index(src, "\"" key "\":")
+          if (p == 0) return 0
+          r = substr(src, p + length(key) + 3)
+          if (match(r, /^[0-9]+/)) return substr(r, 1, RLENGTH) + 0
+          return 0
+        }
+        {
+          s = $0
+          pos = index(s, "\"connections\":[")
+          if (pos == 0) exit
+          s = substr(s, pos + 15)
+          depth = 0; in_str = 0; esc_ch = 0; obj_start = 0; slen = length(s)
+          for (k = 1; k <= slen; k++) {
+            ch = substr(s, k, 1)
+            if (in_str) {
+              if (esc_ch) { esc_ch = 0 }
+              else if (ch == "\\") { esc_ch = 1 }
+              else if (ch == "\"") { in_str = 0 }
+              continue
+            }
+            if (ch == "\"") { in_str = 1; continue }
+            if (ch == "]" && depth == 0) break
+            if (ch == "{") {
+              if (depth == 0) obj_start = k
+              depth++
+            } else if (ch == "}") {
+              depth--
+              if (depth == 0 && obj_start > 0) {
+                c = substr(s, obj_start, k - obj_start + 1)
+                obj_start = 0
+                cid = jstr(c, "id")
+                if (cid == "") continue
+                up = jnum(c, "upload")
+                dn = jnum(c, "download")
+                u = jstr(c, "user")
+                if (u == "") u = jstr(c, "inboundUser")
+                if (u == "") u = jstr(c, "authUser")
+                if (u == "") {
+                  ap = index(c, "auth_user=")
+                  if (ap > 0) {
+                    rest = substr(c, ap + 10)
+                    if (substr(rest, 1, 1) == "[") rest = substr(rest, 2)
+                    split(rest, utmp, "\""); rest = utmp[1]
+                    split(rest, utmp, "]"); rest = utmp[1]
+                    split(rest, utmp, ","); rest = utmp[1]
+                    split(rest, utmp, " "); u = utmp[1]
+                  }
+                }
+                if (u == "") {
+                  rp = jstr(c, "rulePayload")
+                  if (rp != "" && index(rp, "/") == 0 && rp !~ /^[0-9.:]+$/) u = rp
+                }
+                if (u == "") u = "默认用户"
+                printf "%s\t%s\t%.0f\t%.0f\n", cid, u, up, dn
+              }
+            }
+          }
+        }
+      ' > "$CUR_FILE"
+
+      if [ "$SEED_ONLY" = "1" ]; then
+        awk -F'\t' -v OFS='\t' '{print $1,$3,$4}' "$CUR_FILE" > "$PREV"
+        SEED_ONLY=0
+      else
+        CHANGED=$(awk -F'\t' -v OFS='\t' -v out_tsv="${TSV}.tmp" '
+          FILENAME == ARGV[1] {
+            if (NF >= 3) { pu[$1] = $2 + 0; pd[$1] = $3 + 0; seen[$1] = 1 }
+            next
+          }
+          FILENAME == ARGV[2] {
+            if (NF >= 7 && $1 != "") {
+              tu[$1]=$2+0; td[$1]=$3+0; mu[$1]=$4+0; md[$1]=$5+0; au[$1]=$6+0; ad[$1]=$7+0; uk[$1]=1
+            }
+            next
+          }
+          {
+            cid=$1; u=$2; cu=$3+0; cd=$4+0
+            if (seen[cid]) {
+              du = (cu >= pu[cid]) ? (cu - pu[cid]) : cu
+              dd = (cd >= pd[cid]) ? (cd - pd[cid]) : cd
+            } else {
+              du = cu; dd = cd
+            }
+            if (du > 0 || dd > 0) {
+              tu[u] += du; td[u] += dd
+              mu[u] += du; md[u] += dd
+              au[u] += du; ad[u] += dd
+              uk[u] = 1
+              chg = 1
+            }
+          }
+          END {
+            for (u in uk) {
+              printf "%s\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\n", u, tu[u], td[u], mu[u], md[u], au[u], ad[u] > out_tsv
+            }
+            print (chg ? "1" : "0")
+          }
+        ' "$PREV" "$TSV" "$CUR_FILE" 2>/dev/null)
+        if [ -f "${TSV}.tmp" ]; then
+          mv -f "${TSV}.tmp" "$TSV"
+          chmod 600 "$TSV" 2>/dev/null || true
+        fi
+        awk -F'\t' -v OFS='\t' '{print $1,$3,$4}' "$CUR_FILE" > "$PREV"
+        [ "$CHANGED" = "1" ] && DIRTY=1
+      fi
+    fi
+  fi
+
+  SINCE_FLUSH=$((SINCE_FLUSH + 1))
+  if [ "$DIRTY" = "1" ] && [ "$SINCE_FLUSH" -ge "$FLUSH_TICKS" ]; then
+    write_json
+    DIRTY=0
+    SINCE_FLUSH=0
+  fi
+  sleep "$POLL_SEC"
+done
+NODEDECK_LEDGER_EOF
+  chmod 700 /usr/local/bin/nodedeck-ledger.sh
+
+  cat <<NODEDECK_INIT_EOF > /etc/init.d/nodedeck-ledger
+#!/sbin/openrc-run
+description="NodeDeck Per-Member Persistent Traffic Ledger"
+command="/bin/sh"
+command_args="/usr/local/bin/nodedeck-ledger.sh ${SB_CFG}"
+supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+pidfile="/run/nodedeck-ledger.pid"
+
+depend() {
+    need net
+    after sing-box
+}
+NODEDECK_INIT_EOF
+  chmod 755 /etc/init.d/nodedeck-ledger
+
+  if command -v rc-update >/dev/null 2>&1; then
+    rc-update add nodedeck-ledger default >/dev/null 2>&1 || true
+  fi
+  if command -v rc-service >/dev/null 2>&1; then
+    rc-service nodedeck-ledger restart >/dev/null 2>&1 || rc-service nodedeck-ledger start
+  else
+    echo "ERROR: 未检测到 OpenRC rc-service" >&2
+    exit 1
+  fi
+  echo "已安装并启动 Alpine 超轻持久化流量账本（BusyBox sh+awk，常驻内存 <1.5 MB）"
+  exit 0
+fi
+
+if [ "$ACTION" = "ledger_disable" ]; then
+  if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/nodedeck-ledger ]; then
+    rc-service nodedeck-ledger stop >/dev/null 2>&1 || true
+  fi
+  if command -v rc-update >/dev/null 2>&1; then
+    rc-update del nodedeck-ledger default >/dev/null 2>&1 || true
+  fi
+  echo "已停用 Alpine 持久化流量账本（历史统计文件已保留）"
+  exit 0
+fi
+
+if [ "$ACTION" = "ledger_reset" ]; then
+  SCOPE=$(printf '%s' "$EXTRA" | cut -d'|' -f1)
+  UNAME=$(printf '%s' "$EXTRA" | cut -d'|' -f2-)
+  [ -z "$UNAME" ] && echo "ERROR: 缺少要清零的用户名" >&2 && exit 1
+  TSV="${SB_DIR}/.nodedeck_ledger.tsv"
+  JSON="${SB_DIR}/traffic_ledger.json"
+  META="${SB_DIR}/.nodedeck_ledger.meta"
+  WAS_ACTIVE=0
+  if command -v rc-service >/dev/null 2>&1 && rc-service nodedeck-ledger status >/dev/null 2>&1; then
+    WAS_ACTIVE=1
+    rc-service nodedeck-ledger stop >/dev/null 2>&1 || true
+  fi
+  if [ -f "$TSV" ]; then
+    awk -F'\t' -v OFS='\t' -v target="$UNAME" -v scope="$SCOPE" '
+      NF >= 7 {
+        if (target == "__ALL__" || $1 == target) {
+          $2=0; $3=0; $4=0; $5=0
+          if (scope == "all") { $6=0; $7=0 }
+        }
+        print $1,$2,$3,$4,$5,$6,$7
+      }
+    ' "$TSV" > "${TSV}.tmp" && mv -f "${TSV}.tmp" "$TSV"
+  else
+    : > "$TSV"
+  fi
+  NOW_TS=$(date +%s)
+  CUR_DAY=$(date +%Y-%m-%d)
+  CUR_MON=$(date +%Y-%m)
+  awk -F'\t' -v now="$NOW_TS" -v day="$CUR_DAY" -v mon="$CUR_MON" '
+    function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+    BEGIN { printf "{\"version\":1,\"updatedAt\":%s,\"day\":\"%s\",\"month\":\"%s\",\"users\":{", now, day, mon; first=1 }
+    NF >= 7 && $1 != "" {
+      if (!first) printf ","; first=0
+      printf "\"%s\":{\"todayUp\":%.0f,\"todayDown\":%.0f,\"monthUp\":%.0f,\"monthDown\":%.0f,\"totalUp\":%.0f,\"totalDown\":%.0f}",
+        jesc($1), $2+0, $3+0, $4+0, $5+0, $6+0, $7+0
+    }
+    END { printf "}}\n" }
+  ' "$TSV" > "${JSON}.tmp" && mv -f "${JSON}.tmp" "$JSON"
+  printf '%s\t%s\t%s\n' "$CUR_DAY" "$CUR_MON" "$NOW_TS" > "${META}.tmp" && mv -f "${META}.tmp" "$META"
+  if [ "$WAS_ACTIVE" = "1" ]; then
+    rc-service nodedeck-ledger start >/dev/null 2>&1 || true
+  fi
+  if [ "$UNAME" = "__ALL__" ]; then
+    echo "已清零全部成员的账本统计"
+  else
+    echo "已清零成员「${UNAME}」的账本统计"
   fi
   exit 0
 fi

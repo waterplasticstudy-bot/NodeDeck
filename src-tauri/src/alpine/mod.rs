@@ -5,7 +5,10 @@ pub mod config;
 pub mod exits;
 pub mod ssh;
 
-pub use audit::{close_alpine_conn, configure_alpine_audit, fetch_alpine_audit};
+pub use audit::{
+    close_alpine_conn, configure_alpine_audit, fetch_alpine_audit, fetch_alpine_clash_info,
+    manage_alpine_ledger,
+};
 pub use config::{
     fetch_alpine_config, fetch_alpine_config_fast, mutate_alpine_inbound, InboundMutateInput,
 };

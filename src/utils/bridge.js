@@ -81,6 +81,24 @@ export async function onTrayRefresh(callback) {
   }
 }
 
+/** 监听后端 PTY 伪终端输出事件 (nodedeck://pty-data) */
+export async function onPtyData(callback) {
+  const listen = window.__TAURI__?.event?.listen;
+  if (typeof listen === 'function') {
+    return listen('nodedeck://pty-data', (ev) => callback(ev.payload || {}));
+  }
+  return () => {};
+}
+
+/** 监听后端 PTY 伪终端退出事件 (nodedeck://pty-exit) */
+export async function onPtyExit(callback) {
+  const listen = window.__TAURI__?.event?.listen;
+  if (typeof listen === 'function') {
+    return listen('nodedeck://pty-exit', (ev) => callback(ev.payload || {}));
+  }
+  return () => {};
+}
+
 /** 可靠复制到系统剪贴板（绝不使用原生 prompt() 降级） */
 export async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {

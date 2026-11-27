@@ -299,8 +299,9 @@ export async function openIpCheckSheet() {
   }
 }
 
-export function initOverviewEvents(appState, { switchTab, toggleDemoMode }) {
+export function initOverviewEvents(appState, { switchTab, toggleDemoMode, openTerminalSb }) {
   $('goAuditBtn').addEventListener('click', () => switchTab('audit'));
+  $('ovOpenSbBtn')?.addEventListener('click', () => openTerminalSb());
   $('forceSecBtn').addEventListener('click', (ev) => {
     withButtonLoading(ev.currentTarget, async () => {
       showToast('正在全量复检安全状态...');

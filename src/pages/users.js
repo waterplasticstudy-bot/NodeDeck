@@ -31,27 +31,42 @@ const $ = (id) => document.getElementById(id);
 let activeUserModalCtx = null;
 let vpsUsersCache = null;
 
+function isSs2022Eih(proto, method = '') {
+  return String(proto || '').toLowerCase() === 'shadowsocks'
+    && String(method || '').toLowerCase().startsWith('2022-blake3-');
+}
+
+function supportsMultiUser(inb) {
+  const proto = String(inb?.type || '').toLowerCase();
+  return proto !== 'shadowsocks' || isSs2022Eih(proto, inb?.method);
+}
+
 function openNodeUserModal(ctx) {
   activeUserModalCtx = ctx;
   const isVless = ctx.proto === 'vless';
   const isSS = ctx.proto === 'shadowsocks';
+  const isEih = isSs2022Eih(ctx.proto, ctx.method);
   const isEdit = Boolean(ctx.origName || ctx.vpsUuid);
 
   $('nodeUserModalTitle').textContent = isEdit
     ? `编辑用户「${ctx.origName || ctx.username}」`
     : `新增用户 · ${ctx.nodeName} [${ctx.tag}]`;
-  $('nodeUserModalSub').textContent = `节点：${ctx.nodeName} · 协议：${ctx.proto.toUpperCase()} :${ctx.port}（修改后自动备份并平滑重启）`;
-  $('nodeUserNameWrap').classList.toggle('hidden', isSS);
+  $('nodeUserModalSub').textContent = isEih
+    ? `节点：${ctx.nodeName} · SS-2022 EIH 单端口多用户 :${ctx.port}（导出时自动拼装 ServerPSK:UserPSK，自动同步分人统计）`
+    : `节点：${ctx.nodeName} · 协议：${ctx.proto.toUpperCase()} :${ctx.port}（修改后自动备份并平滑重启）`;
+  $('nodeUserNameWrap').classList.toggle('hidden', isSS && !isEih);
   $('nodeUserNameInput').value = ctx.username || '';
   $('nodeUserPassInput').value = ctx.password || '';
   $('nodeUserPassLabel').textContent = isVless
     ? 'UUID（留空保留原值或自动生成 UUIDv4）'
-    : isSS
-      ? 'Shadowsocks-2022 密钥（留空自动生成）'
-      : '访问密码（留空保留原值或自动生成 24 位强密码）';
+    : isEih
+      ? '用户独立 PSK（16 字节 Base64，留空保留原值或自动生成；导出自动拼接服务端主密钥）'
+      : isSS
+        ? 'Shadowsocks 密钥（留空自动生成）'
+        : '访问密码（留空保留原值或自动生成 24 位强密码）';
 
   openModal('nodeUserModal');
-  if (!isSS) $('nodeUserNameInput').focus();
+  if (!isSS || isEih) $('nodeUserNameInput').focus();
 }
 
 function renderMatrixView(appState) {
@@ -119,7 +134,7 @@ function renderMatrixView(appState) {
               <div class="sub-note mt-xs">共 ${(n.inbounds || []).length} 个入站 · 匹配 ${rows.length} 条使用用户</div>
             </div>
             <div class="toolbar">
-              ${firstInb && firstInb.type !== 'shadowsocks'
+              ${firstInb && supportsMultiUser(firstInb)
                 ? `<button class="btn sm primary" data-action="mx-add" data-node="${esc(n.nodeId)}" data-tag="${esc(firstInb.tag)}">＋ 加用户</button>`
                 : ''}
               <button class="btn sm" data-action="mx-goto-node" data-node="${esc(n.nodeId)}">🧩 节点协议</button>
@@ -143,7 +158,7 @@ function renderMatrixView(appState) {
                   <button class="btn sm" data-action="mx-qr" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📱 二维码</button>
                   <button class="btn sm" data-action="mx-copy-yaml" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📋 YAML</button>
                   <button class="btn sm primary" data-action="mx-export" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">📦 生成配置</button>
-                  ${r.proto !== 'shadowsocks'
+                  ${supportsMultiUser(r.inb) && (r.inb.usersDetail || []).length > 1
                     ? `<button class="btn sm danger" data-action="mx-del" data-node="${esc(n.nodeId)}" data-tag="${esc(r.inb.tag)}" data-user="${esc(r.uname)}">移除</button>`
                     : ''}
                 </div>
@@ -212,14 +227,15 @@ async function loadCurrentNatUsers(appState, node) {
               <h3 class="card-title-lg">${flag} ${esc(node.name)} · ${esc(inb.tag)} (${esc(proto.toUpperCase())} :${esc(inb.listenPort)})</h3>
               <div class="sub-note">共 ${users.length} 个使用用户 · 支持原地改名、改密码、离线二维码与一键生成客户端配置</div>
             </div>
-            ${proto !== 'shadowsocks'
-              ? `<button class="btn sm primary" data-action="nat-u-add" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-port="${esc(inb.listenPort)}">＋ 新增用户</button>`
+            ${supportsMultiUser(inb)
+              ? `<button class="btn sm primary" data-action="nat-u-add" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-method="${esc(inb.method || '')}" data-port="${esc(inb.listenPort)}">＋ 新增用户</button>`
               : ''}
           </div>
           <div class="ios-list">
             ${users.map((u) => {
               const uname = u.username || u.name || inb.tag;
               const cred = proto === 'vless' ? (u.uuid || '') : (u.password || inb.password || '');
+              const editCred = isSs2022Eih(proto, inb.method) ? (u.userPassword || '') : cred;
               return `
                 <div class="matrix-user-row">
                   <div>
@@ -227,12 +243,12 @@ async function loadCurrentNatUsers(appState, node) {
                     <div class="matrix-cred-line mono">凭证：${esc(cred)}</div>
                   </div>
                   <div class="toolbar">
-                    <button class="btn sm" data-action="nat-u-edit" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-port="${esc(inb.listenPort)}" data-user="${esc(uname)}" data-cred="${esc(cred)}">✏️ 改名/密码</button>
+                    <button class="btn sm" data-action="nat-u-edit" data-tag="${esc(inb.tag)}" data-proto="${esc(proto)}" data-method="${esc(inb.method || '')}" data-port="${esc(inb.listenPort)}" data-user="${esc(uname)}" data-cred="${esc(editCred)}">✏️ 改名/密码</button>
                     <button class="btn sm" data-action="nat-u-link" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 链接</button>
                     <button class="btn sm" data-action="nat-u-qr" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📱 二维码</button>
                     <button class="btn sm" data-action="nat-u-yaml" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📋 YAML</button>
                     <button class="btn sm primary" data-action="nat-u-export" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">📦 生成配置</button>
-                    ${proto !== 'shadowsocks'
+                    ${supportsMultiUser(inb) && users.length > 1
                       ? `<button class="btn sm danger" data-action="nat-u-del" data-tag="${esc(inb.tag)}" data-user="${esc(uname)}">移除</button>`
                       : ''}
                   </div>
@@ -383,7 +399,8 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     if (!ctx) return;
     const username = $('nodeUserNameInput').value.trim();
     const password = $('nodeUserPassInput').value.trim();
-    if (ctx.proto !== 'shadowsocks' && !username) {
+    const needName = ctx.proto !== 'shadowsocks' || isSs2022Eih(ctx.proto, ctx.method);
+    if (needName && !username) {
       showToast('请输入用户名', true);
       return;
     }
@@ -436,6 +453,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         nodeName: node.name,
         tag: inb.tag,
         proto: String(inb.type || '').toLowerCase(),
+        method: inb.method || '',
         port: inb.listenPort,
         username: '',
         password: '',
@@ -445,14 +463,20 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
     }
     if (action === 'mx-edit' && node && inb) {
       const proto = String(inb.type || '').toLowerCase();
+      const editPass = proto === 'vless'
+        ? (user?.uuid || '')
+        : isSs2022Eih(proto, inb.method)
+          ? (user?.userPassword || '')
+          : (user?.password || inb.password || '');
       openNodeUserModal({
         nodeId,
         nodeName: node.name,
         tag: inb.tag,
         proto,
+        method: inb.method || '',
         port: inb.listenPort,
         username: uname,
-        password: proto === 'vless' ? (user?.uuid || '') : (user?.password || inb.password || ''),
+        password: editPass,
         origName: uname,
       });
       return;
@@ -554,6 +578,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         nodeName: node.name,
         tag: btn.dataset.tag,
         proto: btn.dataset.proto,
+        method: btn.dataset.method || '',
         port: Number(btn.dataset.port),
         username: '',
         password: '',
@@ -567,6 +592,7 @@ export function initUsersEvents(appState, { reloadOverview, switchToNode }) {
         nodeName: node.name,
         tag: btn.dataset.tag,
         proto: btn.dataset.proto,
+        method: btn.dataset.method || '',
         port: Number(btn.dataset.port),
         username: btn.dataset.user,
         password: btn.dataset.cred,

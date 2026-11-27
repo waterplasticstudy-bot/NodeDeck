@@ -173,6 +173,8 @@ jobs:
               src-tauri/src/mihomo.rs \
               src-tauri/src/ssh_client.rs \
               src-tauri/src/accounts.rs \
+              src-tauri/src/tunnel.rs \
+              src-tauri/src/terminal.rs \
               src/utils/client-export.js \
               src/utils/qrcode.js \
               scripts/privacy-check.mjs \

@@ -9,7 +9,7 @@
 
 [简体中文](./README.md) · [English](./README_EN.md) · [🔐 源码 SHA-256 校验清单](./SHA256SUMS-source.txt)
 
-![Version](https://img.shields.io/badge/Version-v1.2.1-007aff)
+![Version](https://img.shields.io/badge/Version-v1.4.0-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
 ![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6?logo=apple)
@@ -77,34 +77,40 @@ NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统�
 
 ---
 
-## 🚀 核心功能一览（v1.2.1）
+## 🚀 核心功能一览（v1.4.0）
 
-### 1. 本机 Mihomo / Clash 联动（参考 Zashboard DIY 体验）
+### 1. 内置交互式 SSH 终端与快捷命令 + 零暴露远端 `sing-box` 面板
+- **⌨️ 跨平台原生 PTY 终端（Windows ConPTY / macOS PTY + 离线 `xterm.js`）**：多标签并发、一键拉起服务器 `sb` 交互脚本菜单、字体大小切换、右键智能复制粘贴与沉浸全屏；内置 **右侧可折叠「快捷命令」抽屉**（本地持久化至 `config.json`，单击选中 / 双击即执行）。
+- **📊 零公网暴露远端连接监控隧道**：通过加密 SSH `-L` 回环隧道把远端仅监听在 `127.0.0.1` 的 `sing-box` Clash API 映射至本机随机回环端口，零公网端口开放即可实时查连接、查规则、一键掐断；关窗或退出自动销毁隧道进程。
+- **🔌 SSH 断线静默自动重连**：切换代理节点/网络抖动导致控制连接中断时，主 VPS 长连接与 Alpine NAT 指令自动透明重建并重试，告别手动重启软件。
+
+### 2. 本机 Mihomo / Clash 联动（参考 Zashboard DIY 体验）
 - 兼容 **Bettbox / Clash Verge Rev / FlClash / Mihomo Meta** 等全部本地 Clash API 内核，支持原版 Web UI 随时切换。
 - **策略组 DIY 工具条**：节点按延迟/名称/默认排序、一键 **隐藏不可用/超时节点**、卡片密度切换（标准双列 / 紧凑多列 / 宽松卡片）、自定义测速 URL 与超时、**右键任意节点快捷测速**、单组并发 `⚡ 测整组`（完整支持含空格与 Emoji 策略组）。
 - **📜 实时分流规则检视器（只读）**：直查当前内核生效的全部规则与 `.mrs` 规则集加载条数，按域名/类型/策略组秒级检索。
-- **实时连接表 Zashboard 交互**：列显隐自定义、`⏸️ 暂停刷新`、按流量/域名/进程排序、**右键单元格一键复制域名或规则**。
+- **实时连接表 Zashboard 交互**：列显隐自定义、`⏸️ 暂停刷新`、按流量/域名/进程排序、**右键任意行一键「加入 APP 专属分流」/「强制走落地」/「直连」/「复制」/「掐断」**。
 
-### 2. 离线客户端配置生成器（自由 DIY + 4 重防出错护栏）
+### 3. 离线客户端配置生成器（自由 DIY + 4 重防出错护栏）
 - 支持自由勾选单台或多台落地节点（VPS + 任意台 NAT 组合），纯本机离线生成：
   - **全平台单文件 `.yaml`**（Win10/11 · iOS 蓝猫 Clash Mi / Stash · 鸿蒙 4/7 通用，内置 50 MB iOS 防崩护栏与自包含防回环规则）；
-  - **Bettbox / Clash Verge 万能覆写 `.js` v4.4**。
-- **高度自由 DIY**：
+  - **Bettbox / Clash Verge 万能覆写 `.js` v4.5**。
+- **高度自由 DIY + APP 防风控专属分流**：
+  - **自定义 APP 专属策略组与节点绑定**：内置 18 款常用 APP 预设（Bybit、币安、OKX、Google 钱包、ChatGPT、Claude、Gemini、Grok、YouTube、Telegram、X、Instagram、Gmail、TikTok、Pixiv、EhViewer、JMComic、Steam 等）并支持任意自由添加自定义 APP；可为单个 APP 独立绑定指定自建落地节点或安全国家池，自带 **禁区防风控自动预警**（如 Bybit/币安 严禁美/港/新 IP），纯域名/关键字匹配全平台（含鸿蒙卓易通/出境易、iOS、Mac、Windows）100% 生效；
   - 「落地出口」备选国家 3 模式（🤖 自动跟随所选落地地区 / 🎯 10 国多选胶囊 / 🔒 仅自建落地）；
   - 前置地区 3 模式（亚太低延迟 / 全部 / 自定义）、精准 `>1x` 倍率过滤（放行 `0.1x / 0.5x / 0.9x / 1x`）、自定义测速 URL；
   - 普通流量默认去向（`🛡️ 落地出口优先` vs `⚡ 机场直出优先省流量`）、运维防回环 IP 隔离、**可视化自定义规则箱**（免写 YAML 自动校验去重）；
   - 常用配方可存为本机预设方案，后续换订阅/换密钥 **2 秒一键重出**。
 - **4 重防出错护栏**：Go RE2 禁前瞻强校验、空池多层保底、发他人前隐私防误发预警、全套防定位泄露与防国内 STUN 反射规则。
 
-### 3. 混合架构全纳管 + `sing-box` 多协议 CRUD + 离线二维码
+### 4. 混合架构全纳管 + `sing-box` 多协议（含 SS-2022 单口多用户 EIH）+ 离线二维码
 - **主 VPS (`systemd`) + Alpine LXC NAT (`OpenRC`)**：NAT 端零 Python 依赖、128 MB 小内存友好、单次 SSH 合并查询提速 50%。
-- **4 协议统一管理**：VLESS + Reality、Shadowsocks-2022、SOCKS5、HTTP、Mixed 一键增删改，每次修改自动滚动备份 + `sing-box check` 校验失败秒级回滚。
+- **4 协议统一管理**：VLESS + Reality、**Shadowsocks-2022（完整支持单端口多用户 EIH 独立子密钥与单人归属链接/YAML 导出）**、SOCKS5、HTTP、Mixed 一键增删改，每次修改自动滚动备份 + `sing-box check` 校验失败秒级回滚。
 - **纯离线二维码**：内置零依赖 ISO/IEC 18004 QR 编码器（支持 V1–V16 / 中文 UTF-8 / 长 VLESS+Reality 链接），不请求任何外部二维码接口。
 
-### 4. `127.0.0.1` 零暴露成员审计、多账号隔离沙箱与外观 DIY
-- 成员实时流量与多 `/24` 网段异常共享标红预警，统计接口严锁 `127.0.0.1` + 32 位随机密钥。
-- 多账号 WebView2 Profile 级物理隔离不串号，支持免订阅仪表盘识别流量 + 可选手动单次订阅查流。
-- **全局外观 DIY & 效率快捷键**：6 套精选强调色（浅/深双主题自适应）、舒适/紧凑全局密度、Mihomo 辅助卡片显隐开关、`Ctrl+K` 全局命令面板、`Ctrl+R` 刷新、日志语义高亮与导出。
+### 5. 持久化成员流量账本、一键静默多账号同步与全屏自适应 UI
+- **持久化按人流量账本 + 本地月度配额**：支持在主 VPS（`systemd`）与 Alpine NAT（OpenRC ~0.6 MB 轻量守护）一键开启按成员持续累计（今日 / 本月 / 历史总计，重启不丢），并可为成员设置本地月度参考配额（80% 橙色提醒、100% 标红，绝不主动断网）。
+- **多账号隔离沙箱与静默一键同步**：WebView2 / WKWebView Profile 级物理隔离不串号；已登录沙箱支持后台隐藏静默自动切页识别官方流量（1 次点击零弹窗），并支持续费中心 **「↻ 一键同步全部流量」**。
+- **全屏自适应布局与快捷交互**：全面移除固定最大宽度限制，搭配 `ResizeObserver` 自动适配 1080p / 2K / 4K 最大化与半屏分屏；新增 **顶部一键节点切换胶囊条**、6 套强调色、舒适/紧凑密度、`Ctrl+K` 命令面板、`Ctrl+R` 刷新。
 
 ---
 
@@ -132,7 +138,7 @@ NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统�
 git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
 cd NodeDeck
 
-# 2. 运行全链路自动化质量与隐私门禁（19 项检测）
+# 2. 运行全链路自动化质量与隐私门禁（22 项检测）
 node scripts/verify-all.mjs
 
 # 3. 执行 Rust 单元测试、严格 Clippy 检查与 Release 编译
@@ -165,7 +171,7 @@ Windows 产物位于 `src-tauri/target/release/NodeDeck.exe`（约 6 MB），mac
    将输出与对应 Release 页面的 `SHA256SUMS.txt` 逐位比对即可。
 
 2. **关键安全模块与核心脚本源码哈希（已公开在仓库根目录）**：  
-   见 **[`SHA256SUMS-source.txt`](./SHA256SUMS-source.txt)**，覆盖远端采集脚本（`remote_agent.py` / `remote_agent_alpine.sh`）、Rust 核心通信模块（`ssh_client.rs` / `mihomo.rs` / `config.rs` / `accounts.rs`）、离线配置与二维码生成器（`client-export.js` / `qrcode.js`）以及自动化门禁脚本（`privacy-check.mjs` / `verify-all.mjs`）。本地克隆后可直接核验：
+   见 **[`SHA256SUMS-source.txt`](./SHA256SUMS-source.txt)**，覆盖远端采集脚本（`remote_agent.py` / `remote_agent_alpine.sh`）、Rust 核心通信与终端隧道模块（`ssh_client.rs` / `mihomo.rs` / `config.rs` / `accounts.rs` / `tunnel.rs` / `terminal.rs`）、离线配置与二维码生成器（`client-export.js` / `qrcode.js`）以及自动化门禁脚本（`privacy-check.mjs` / `verify-all.mjs`）。本地克隆后可直接核验：
    ```powershell
    Get-Content .\SHA256SUMS-source.txt | Where-Object { $_ -and $_ -notlike '#*' } | ForEach-Object {
      $expected, $file = $_ -split '\s+', 2

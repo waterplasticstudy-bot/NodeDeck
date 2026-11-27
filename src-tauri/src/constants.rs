@@ -82,6 +82,13 @@ pub const SUBSCRIPTION_FETCH_TIMEOUT_MS: u64 = 12_000;
 pub const SUBSCRIPTION_USER_AGENT: &str = "clash-verge/v2.0.0";
 pub const PROFILE_ID_PATTERN: &str = r"^[a-zA-Z0-9_-]{1,36}$";
 
+/// 零公网暴露远端 sing-box 面板加密隧道窗口参数
+pub const SINGBOX_PANEL_WINDOW_PREFIX: &str = "singbox-panel-";
+pub const SINGBOX_PANEL_WINDOW_WIDTH: f64 = 1120.0;
+pub const SINGBOX_PANEL_WINDOW_HEIGHT: f64 = 760.0;
+pub const TUNNEL_READY_TIMEOUT_MS: u64 = 9_000;
+pub const TUNNEL_HTTP_TIMEOUT_MS: u64 = 4_000;
+
 /// NAT 原生 TCP 端口探针参数
 pub const TCP_PING_TIMEOUT_MS: u64 = 4_000;
 

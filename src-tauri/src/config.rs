@@ -11,6 +11,7 @@ use crate::constants::{
     DEFAULT_VLESS_FP,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 #[cfg(target_os = "windows")]
 use std::path::Path;
@@ -22,6 +23,23 @@ static CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn config_lock() -> &'static Mutex<()> {
     CONFIG_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// 自定义 APP / 服务专属分流与节点绑定规则（仅存本机 config.json，支持跨平台 YAML 与 Bettbox JS）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppRouteRuleConfig {
+    pub id: String,
+    pub preset_id: String,
+    pub name: String,
+    pub icon: String,
+    pub domains: Vec<String>,
+    pub keywords: Vec<String>,
+    pub processes: Vec<String>,
+    pub target_mode: String,
+    pub landing_keys: Vec<String>,
+    pub fallback_regions: Vec<String>,
+    pub blocked_regions: Vec<String>,
 }
 
 /// 纯本地离线客户端配置导出方案预设（仅保存在本机 config.json，绝不上传；全部新字段默认向后兼容）
@@ -49,6 +67,18 @@ pub struct ExportPresetConfig {
     pub custom_exit_domains: String,
     pub custom_direct_domains: String,
     pub custom_reject_domains: String,
+    #[serde(default)]
+    pub app_routes: Vec<AppRouteRuleConfig>,
+}
+
+/// 本地交互终端快捷命令片段（仅保存在本机 config.json，零云端同步）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TerminalSnippet {
+    pub id: String,
+    pub title: String,
+    pub command: String,
+    pub scope: String,
 }
 
 /// 仪表盘识别、宿主机原生计费或单次订阅头同步的本地持久化流量快照
@@ -192,6 +222,10 @@ pub struct AppConfig {
     pub provider_accounts: Vec<ProviderAccountConfig>,
     #[serde(default)]
     pub export_presets: Vec<ExportPresetConfig>,
+    #[serde(default)]
+    pub member_quotas_gb: HashMap<String, f64>,
+    #[serde(default)]
+    pub terminal_snippets: Vec<TerminalSnippet>,
 }
 
 impl Default for AppConfig {
@@ -213,6 +247,8 @@ impl Default for AppConfig {
             nat_nodes: Vec::new(),
             provider_accounts: Vec::new(),
             export_presets: Vec::new(),
+            member_quotas_gb: HashMap::new(),
+            terminal_snippets: Vec::new(),
         }
     }
 }
@@ -390,8 +426,15 @@ mod tests {
         let parsed: ExportPresetConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.id, "p1");
         assert!(parsed.exit_fallback_regions.is_empty());
+        assert!(parsed.app_routes.is_empty());
         assert_eq!(parsed.exit_fallback_mode, "");
         assert!(!parsed.include_all_managed_ips);
+
+        let with_apps = r#"{"id":"p2","name":"BybitSafe","appRoutes":[{"id":"r1","presetId":"bybit","name":"Bybit","icon":"🟡","domains":["bybit.com"],"keywords":["bybit"],"targetMode":"custom_group","landingKeys":["nat_jp"],"fallbackRegions":["JP","KR","TW"],"blockedRegions":["US","HK"]}]}"#;
+        let parsed2: ExportPresetConfig = serde_json::from_str(with_apps).unwrap();
+        assert_eq!(parsed2.app_routes.len(), 1);
+        assert_eq!(parsed2.app_routes[0].name, "Bybit");
+        assert_eq!(parsed2.app_routes[0].fallback_regions, vec!["JP", "KR", "TW"]);
     }
 
     #[test]

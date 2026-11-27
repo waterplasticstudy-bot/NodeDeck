@@ -29,6 +29,10 @@ DEFAULT_LISTEN_PORT = 8443                       # 默认主入站端口
 DEFAULT_SNI = "www.microsoft.com"                # 默认 Reality 伪装域名
 DEFAULT_VLESS_FLOW = "xtls-rprx-vision"          # 默认 VLESS 流控
 SS2022_METHOD = "2022-blake3-aes-128-gcm"        # 新增 Shadowsocks-2022 加密套件
+LEDGER_DIR = "/var/lib/nodedeck"                 # 持久化成员流量账本目录
+LEDGER_JSON_PATH = "/var/lib/nodedeck/traffic_ledger.json"  # 持久化流量账本文件
+LEDGER_BIN_PATH = "/usr/local/bin/nodedeck-ledger.py"       # 账本后台守护脚本
+LEDGER_SERVICE_PATH = "/etc/systemd/system/nodedeck-ledger.service"  # systemd 服务单元
 IPINFO_URL = "https://ipinfo.io/json"            # 出口 IP 主查询接口
 IPAPI_URL = (
     "http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,"
@@ -431,11 +435,13 @@ def sync_user_audit_rules(sc):
     ]
     ca = sc.get("experimental", {}).get("clash_api", {})
     if ca and ca.get("external_controller"):
-        users = sc.get("inbounds", [{}])[0].get("users", [])
-        for user in users:
-            uname = user.get("name")
-            if uname:
-                rules.append({"auth_user": [uname], "outbound": "direct"})
+        seen = set()
+        for inb in sc.get("inbounds", []):
+            for user in inb.get("users", []):
+                uname = user.get("name") or user.get("username")
+                if uname and uname not in seen:
+                    seen.add(uname)
+                    rules.append({"auth_user": [uname], "outbound": "direct"})
 
 
 def handle_mutate(args):
@@ -569,6 +575,27 @@ def handle_mutate(args):
     }
 
 
+def _read_vps_ledger_status():
+    installed = os.path.exists(LEDGER_BIN_PATH) and os.path.exists(LEDGER_SERVICE_PATH)
+    act_out, _, act_rc = run_cmd(["systemctl", "is-active", "nodedeck-ledger"], timeout=3)
+    active = act_rc == 0 and act_out.strip() == "active"
+    data = {}
+    if os.path.exists(LEDGER_JSON_PATH):
+        try:
+            with open(LEDGER_JSON_PATH, "r", encoding="utf-8") as lf:
+                data = json.load(lf)
+        except Exception:
+            data = {}
+    return {
+        "installed": installed,
+        "active": active,
+        "day": data.get("day", ""),
+        "month": data.get("month", ""),
+        "updatedAt": int(data.get("updatedAt", 0) or 0),
+        "users": data.get("users") if isinstance(data.get("users"), dict) else {},
+    }
+
+
 def handle_audit(_params):
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         sc = json.load(f)
@@ -592,6 +619,7 @@ def handle_audit(_params):
         "connections": [],
         "userSummary": {},
         "recentLogSummary": {},
+        "ledger": _read_vps_ledger_status(),
     }
     for uname in users_list:
         out["userSummary"][uname] = {
@@ -778,27 +806,59 @@ def handle_ipcheck(_params):
     }
 
 
+def _ss2022_key_len(method):
+    m = (method or "").strip()
+    if m == "2022-blake3-aes-128-gcm":
+        return 16
+    if m in ("2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"):
+        return 32
+    return None
+
+
+def _normalize_ss2022_user_psk(raw, key_len):
+    s = (raw or "").strip()
+    if not s:
+        return base64.b64encode(os.urandom(key_len)).decode("ascii")
+    part = s.rsplit(":", 1)[-1].strip()
+    try:
+        dec = base64.b64decode(part, validate=True)
+    except Exception:
+        raise ValueError(f"SS-2022 用户密钥必须为 {key_len} 字节标准 Base64")
+    if len(dec) != key_len:
+        raise ValueError(f"SS-2022 用户密钥长度应为 {key_len} 字节，当前为 {len(dec)} 字节")
+    return part
+
+
 def _extract_users_detail(raw_inb):
     detail = []
     itype = raw_inb.get("type", "")
+    server_pwd = raw_inb.get("password", "")
     if isinstance(raw_inb.get("users"), list) and raw_inb["users"]:
         for u in raw_inb["users"]:
+            raw_upwd = u.get("password") or ""
+            client_pwd = (
+                f"{server_pwd}:{raw_upwd}"
+                if (itype == "shadowsocks" and server_pwd and raw_upwd and ":" not in raw_upwd)
+                else raw_upwd
+            )
             detail.append(
                 {
                     "name": u.get("name") or u.get("username") or "",
                     "username": u.get("username") or u.get("name") or "",
                     "uuid": u.get("uuid") or "",
-                    "password": u.get("password") or "",
+                    "password": client_pwd,
+                    "userPassword": raw_upwd,
                     "flow": u.get("flow") or "",
                 }
             )
-    elif itype == "shadowsocks" and raw_inb.get("password"):
+    elif itype == "shadowsocks" and server_pwd:
         detail.append(
             {
                 "name": raw_inb.get("tag", "ss-user"),
                 "username": raw_inb.get("tag", "ss-user"),
                 "uuid": "",
-                "password": raw_inb.get("password", ""),
+                "password": server_pwd,
+                "userPassword": server_pwd,
                 "flow": "",
             }
         )
@@ -894,17 +954,24 @@ def _build_vps_inbound(proto, tag, port, args, existing=None, base_vless=None):
             },
         }
     if proto == "shadowsocks":
-        method = (args.get("method") or SS2022_METHOD).strip()
+        method = (
+            args.get("method")
+            or ((existing or {}).get("method") if (existing and existing.get("type") == "shadowsocks") else "")
+            or SS2022_METHOD
+        ).strip()
+        klen = _ss2022_key_len(method)
         raw_pwd = (args.get("password") or "").strip()
-        if not raw_pwd:
-            raw_pwd = base64.b64encode(os.urandom(16)).decode("ascii")
-        elif method == SS2022_METHOD:
+        if not raw_pwd and existing and existing.get("type") == "shadowsocks":
+            raw_pwd = (existing.get("password") or "").strip()
+        if klen is not None:
             try:
-                if len(base64.b64decode(raw_pwd)) != 16:
-                    raw_pwd = base64.b64encode(os.urandom(16)).decode("ascii")
+                if not raw_pwd or len(base64.b64decode(raw_pwd)) != klen:
+                    raw_pwd = base64.b64encode(os.urandom(klen)).decode("ascii")
             except Exception:
-                raw_pwd = base64.b64encode(os.urandom(16)).decode("ascii")
-        return {
+                raw_pwd = base64.b64encode(os.urandom(klen)).decode("ascii")
+        elif not raw_pwd:
+            raw_pwd = base64.b64encode(os.urandom(16)).decode("ascii")
+        res = {
             "type": "shadowsocks",
             "tag": tag,
             "listen": "0.0.0.0",
@@ -912,6 +979,15 @@ def _build_vps_inbound(proto, tag, port, args, existing=None, base_vless=None):
             "method": method,
             "password": raw_pwd,
         }
+        if (
+            klen is not None
+            and existing
+            and existing.get("type") == "shadowsocks"
+            and isinstance(existing.get("users"), list)
+            and existing["users"]
+        ):
+            res["users"] = json.loads(json.dumps(existing["users"]))
+        return res
     if proto in ("socks", "http", "mixed"):
         uname = (args.get("username") or "user").strip()
         pwd = (args.get("password") or "").strip() or secrets.token_hex(12)
@@ -1034,11 +1110,36 @@ def handle_sb_inbound_mutate(args):
                 users.append({"username": uname, "password": final_pwd})
             msg = f"已更新 {itype.upper()} 节点「{tag}」用户「{uname}」"
         elif itype == "shadowsocks":
-            if pwd:
-                inb["password"] = pwd
+            method = inb.get("method") or SS2022_METHOD
+            klen = _ss2022_key_len(method)
+            if klen is not None:
+                try:
+                    if not inb.get("password") or len(base64.b64decode(inb["password"])) != klen:
+                        inb["password"] = base64.b64encode(os.urandom(klen)).decode("ascii")
+                except Exception:
+                    inb["password"] = base64.b64encode(os.urandom(klen)).decode("ascii")
+                users = inb.setdefault("users", [])
+                if orig_name and users:
+                    if uname != orig_name and any(u.get("name") == uname for u in users):
+                        raise ValueError(f"用户 {uname} 已存在")
+                    target = next((u for u in users if u.get("name") == orig_name), None)
+                    if not target:
+                        raise ValueError(f"未找到用户 {orig_name}")
+                    target["name"] = uname
+                    if pwd:
+                        target["password"] = _normalize_ss2022_user_psk(pwd, klen)
+                else:
+                    if any(u.get("name") == uname for u in users):
+                        raise ValueError(f"用户 {uname} 已存在")
+                    users.append({"name": uname, "password": _normalize_ss2022_user_psk(pwd, klen)})
+                sync_user_audit_rules(sc)
+                msg = f"已更新 SS-2022 EIH 节点「{tag}」用户「{uname}」"
             else:
-                inb["password"] = base64.b64encode(os.urandom(16)).decode("ascii")
-            msg = f"已更新 Shadowsocks 节点「{tag}」密码"
+                if pwd:
+                    inb["password"] = pwd
+                else:
+                    inb["password"] = base64.b64encode(os.urandom(16)).decode("ascii")
+                msg = f"已更新 Shadowsocks 节点「{tag}」密码"
         else:
             raise ValueError(f"节点协议 {itype} 暂不支持独立用户编辑")
     elif op == "delete_user":
@@ -1116,6 +1217,301 @@ def handle_service(params):
     raise ValueError("不支持的操作")
 
 
+VPS_LEDGER_SCRIPT = r'''#!/usr/bin/env python3
+"""NodeDeck VPS Per-Member Persistent Traffic Ledger Daemon (100% stdlib, ~8MB RAM)."""
+import datetime
+import json
+import os
+import re
+import signal
+import sys
+import time
+import urllib.request
+
+CONFIG_PATH = "/etc/sing-box/config.json"
+LEDGER_DIR = "/var/lib/nodedeck"
+LEDGER_PATH = "/var/lib/nodedeck/traffic_ledger.json"
+POLL_SEC = 10
+FLUSH_SEC = 30
+
+RUNNING = True
+
+
+def _stop_handler(_signum, _frame):
+    global RUNNING
+    RUNNING = False
+
+
+signal.signal(signal.SIGTERM, _stop_handler)
+signal.signal(signal.SIGINT, _stop_handler)
+
+
+def load_clash_conf():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            sc = json.load(f)
+        ca = sc.get("experimental", {}).get("clash_api", {})
+        users = []
+        for inb in sc.get("inbounds", []):
+            for u in inb.get("users", []):
+                n = u.get("name") or u.get("username")
+                if n and n not in users:
+                    users.append(n)
+        return ca.get("external_controller", ""), ca.get("secret", ""), users
+    except Exception:
+        return "", "", []
+
+
+def load_ledger():
+    now = datetime.datetime.now()
+    day = now.strftime("%Y-%m-%d")
+    mon = now.strftime("%Y-%m")
+    if os.path.exists(LEDGER_PATH):
+        try:
+            with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("users"), dict):
+                data.setdefault("day", day)
+                data.setdefault("month", mon)
+                return data
+        except Exception:
+            pass
+    return {"version": 1, "updatedAt": int(time.time()), "day": day, "month": mon, "users": {}}
+
+
+def save_ledger(data):
+    os.makedirs(LEDGER_DIR, mode=0o700, exist_ok=True)
+    data["version"] = 1
+    data["updatedAt"] = int(time.time())
+    tmp = LEDGER_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, LEDGER_PATH)
+
+
+def rollover(data):
+    now = datetime.datetime.now()
+    day = now.strftime("%Y-%m-%d")
+    mon = now.strftime("%Y-%m")
+    changed = False
+    if data.get("day") != day:
+        reset_mon = data.get("month") != mon
+        for st in data.get("users", {}).values():
+            st["todayUp"] = 0
+            st["todayDown"] = 0
+            if reset_mon:
+                st["monthUp"] = 0
+                st["monthDown"] = 0
+        data["day"] = day
+        data["month"] = mon
+        changed = True
+    return changed
+
+
+def extract_user(conn, users_list):
+    meta = conn.get("metadata") or {}
+    u = (
+        meta.get("user")
+        or meta.get("inboundUser")
+        or meta.get("authUser")
+        or meta.get("auth_user")
+        or ""
+    )
+    if not u:
+        rule_str = str(conn.get("rule") or "")
+        m = re.search(r"auth_user=\[?([^\]\s,]+)\]?", rule_str)
+        if m:
+            u = m.group(1)
+        elif str(conn.get("rulePayload") or "") in users_list:
+            u = str(conn.get("rulePayload"))
+    return u or "未标注"
+
+
+def main():
+    ledger = load_ledger()
+    seed_only = bool(ledger.get("users")) and (0 <= int(time.time()) - int(ledger.get("updatedAt") or 0) < 120)
+    rollover(ledger)
+    save_ledger(ledger)
+
+    prev = {}
+    dirty = False
+    last_flush = time.time()
+    ticks = 0
+
+    while RUNNING:
+        if rollover(ledger):
+            save_ledger(ledger)
+            last_flush = time.time()
+            dirty = False
+
+        ctrl, sec, users_list = load_clash_conf()
+        if ctrl:
+            try:
+                req = urllib.request.Request(f"http://{ctrl}/connections")
+                if sec:
+                    req.add_header("Authorization", f"Bearer {sec}")
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                next_prev = {}
+                for conn in payload.get("connections") or []:
+                    cid = conn.get("id") or ""
+                    if not cid:
+                        continue
+                    cu = int(conn.get("upload") or 0)
+                    cd = int(conn.get("download") or 0)
+                    next_prev[cid] = (cu, cd)
+                    if seed_only:
+                        continue
+                    if cid in prev:
+                        pu, pd = prev[cid]
+                        du = (cu - pu) if cu >= pu else cu
+                        dd = (cd - pd) if cd >= pd else cd
+                    else:
+                        du, dd = cu, cd
+                    if du > 0 or dd > 0:
+                        uname = extract_user(conn, users_list)
+                        st = ledger["users"].setdefault(
+                            uname,
+                            {
+                                "todayUp": 0,
+                                "todayDown": 0,
+                                "monthUp": 0,
+                                "monthDown": 0,
+                                "totalUp": 0,
+                                "totalDown": 0,
+                            },
+                        )
+                        st["todayUp"] += du
+                        st["todayDown"] += dd
+                        st["monthUp"] += du
+                        st["monthDown"] += dd
+                        st["totalUp"] += du
+                        st["totalDown"] += dd
+                        dirty = True
+                prev = next_prev
+                seed_only = False
+            except Exception:
+                pass
+
+        ticks += 1
+        now_ts = time.time()
+        if dirty and (ticks <= 2 or (now_ts - last_flush) >= FLUSH_SEC):
+            save_ledger(ledger)
+            last_flush = now_ts
+            dirty = False
+
+        for _ in range(POLL_SEC):
+            if not RUNNING:
+                break
+            time.sleep(1)
+
+    save_ledger(ledger)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def handle_clash_info(_params):
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        sc = json.load(f)
+    ca = sc.get("experimental", {}).get("clash_api", {})
+    return {
+        "controller": ca.get("external_controller", ""),
+        "secret": ca.get("secret", ""),
+    }
+
+
+def handle_ledger_manage(params):
+    action = params.get("action", "")
+    if action == "install":
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            sc = json.load(f)
+        if not sc.get("experimental", {}).get("clash_api", {}).get("external_controller"):
+            raise RuntimeError("请先开启主 VPS 的 127.0.0.1 本地统计接口")
+        os.makedirs(LEDGER_DIR, mode=0o700, exist_ok=True)
+        with open(LEDGER_BIN_PATH, "w", encoding="utf-8") as f:
+            f.write(VPS_LEDGER_SCRIPT)
+        os.chmod(LEDGER_BIN_PATH, 0o700)
+        unit = (
+            "[Unit]\n"
+            "Description=NodeDeck Per-Member Persistent Traffic Ledger\n"
+            "After=network.target sing-box.service\n\n"
+            "[Service]\n"
+            "Type=simple\n"
+            f"ExecStart=/usr/bin/python3 -u {LEDGER_BIN_PATH}\n"
+            "Restart=always\n"
+            "RestartSec=5\n"
+            "Nice=10\n"
+            "MemoryMax=48M\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n"
+        )
+        with open(LEDGER_SERVICE_PATH, "w", encoding="utf-8") as f:
+            f.write(unit)
+        os.chmod(LEDGER_SERVICE_PATH, 0o644)
+        run_cmd(["systemctl", "daemon-reload"], timeout=8)
+        out, err, rc = run_cmd(["systemctl", "enable", "--now", "nodedeck-ledger"], timeout=10)
+        if rc != 0:
+            raise RuntimeError(f"启动 nodedeck-ledger 失败: {err or out}")
+        run_cmd(["systemctl", "restart", "nodedeck-ledger"], timeout=8)
+        return {"ok": True, "message": "已开启主 VPS 持久化流量账本（重启不丢失，~8 MB 内存）"}
+
+    if action == "disable":
+        run_cmd(["systemctl", "disable", "--now", "nodedeck-ledger"], timeout=10)
+        return {"ok": True, "message": "已停用主 VPS 持久化流量账本（历史统计数据已保留）"}
+
+    if action == "reset_user":
+        uname = (params.get("username") or "__ALL__").strip()
+        scope = "all" if params.get("scope") == "all" else "month"
+        act_out, _, act_rc = run_cmd(["systemctl", "is-active", "nodedeck-ledger"], timeout=3)
+        was_active = act_rc == 0 and act_out.strip() == "active"
+        if was_active:
+            run_cmd(["systemctl", "stop", "nodedeck-ledger"], timeout=8)
+        now = datetime.datetime.now()
+        data = {
+            "version": 1,
+            "updatedAt": int(time.time()),
+            "day": now.strftime("%Y-%m-%d"),
+            "month": now.strftime("%Y-%m"),
+            "users": {},
+        }
+        if os.path.exists(LEDGER_JSON_PATH):
+            try:
+                with open(LEDGER_JSON_PATH, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict) and isinstance(loaded.get("users"), dict):
+                    data["users"] = loaded["users"]
+            except Exception:
+                pass
+        targets = list(data["users"].keys()) if uname == "__ALL__" else ([uname] if uname in data["users"] else [])
+        for u in targets:
+            st = data["users"][u]
+            st["todayUp"] = 0
+            st["todayDown"] = 0
+            st["monthUp"] = 0
+            st["monthDown"] = 0
+            if scope == "all":
+                st["totalUp"] = 0
+                st["totalDown"] = 0
+        os.makedirs(LEDGER_DIR, mode=0o700, exist_ok=True)
+        tmp = LEDGER_JSON_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, LEDGER_JSON_PATH)
+        if was_active:
+            run_cmd(["systemctl", "start", "nodedeck-ledger"], timeout=8)
+        label = "全部成员" if uname == "__ALL__" else f"成员「{uname}」"
+        return {"ok": True, "message": f"已清零{label}的{'全部历史' if scope == 'all' else '今日与本月'}流量计数"}
+
+    raise ValueError(f"不支持的账本操作: {action}")
+
+
 HANDLERS = {
     "ping": lambda _: {"pong": True},
     "overview": handle_overview,
@@ -1128,6 +1524,8 @@ HANDLERS = {
     "sb_config": handle_sb_config,
     "sb_inbound": handle_sb_inbound_mutate,
     "service": handle_service,
+    "clash_info": handle_clash_info,
+    "ledger_manage": handle_ledger_manage,
 }
 
 sys.stdout.write(json.dumps({"ready": True}) + "\n")

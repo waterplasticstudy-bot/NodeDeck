@@ -33,6 +33,11 @@ function createInitialDemoState() {
       dialerProxy: 'Proxy',
       closeToTray: true,
       exportPresets: [],
+      memberQuotasGb: { 'vps_main::Alice': 500, 'nat_demo_global::Alice': 100 },
+      terminalSnippets: [
+        { id: 'snip_sb', title: 'sing-box 脚本面板 (sb)', command: 'sb', scope: 'all' },
+        { id: 'snip_mem', title: '内存与负载', command: 'free -m && uptime', scope: 'all' },
+      ],
       natNodes: [
         {
           id: 'nat_demo_global',
@@ -182,6 +187,17 @@ function createInitialDemoState() {
     clashApiEnabled: true,
     auditLogLevel: 'warn',
     natAuditEnabled: { nat_demo_global: true, nat_demo_jp: false },
+    ledgerActive: { vps_main: true, nat_demo_global: true, nat_demo_jp: false },
+    ledgerUsers: {
+      vps_main: {
+        Alice: { todayUp: 314572800, todayDown: 2684354560, monthUp: 4294967296, monthDown: 38654705664, totalUp: 8589934592, totalDown: 77309411328 },
+        Bob: { todayUp: 125829120, todayDown: 943718400, monthUp: 1610612736, monthDown: 12884901888, totalUp: 3221225472, totalDown: 25769803776 },
+        Charlie: { todayUp: 52428800, todayDown: 419430400, monthUp: 644245094, monthDown: 4831838208, totalUp: 1073741824, totalDown: 8589934592 },
+      },
+      nat_demo_global: {
+        Alice: { todayUp: 104857600, todayDown: 838860800, monthUp: 1073741824, monthDown: 9663676416, totalUp: 2147483648, totalDown: 18253611008 },
+      },
+    },
     vpsUsers: [
       { name: 'Alice', uuid: '11111111-4444-4aaa-8bbb-000000000001', flow: 'xtls-rprx-vision' },
       { name: 'Bob', uuid: '22222222-4444-4aaa-8bbb-000000000002', flow: 'xtls-rprx-vision' },
@@ -426,6 +442,14 @@ function buildVpsAuditPayload() {
     configuredUsers: state.vpsUsers.map((u) => u.name),
     userSummary,
     connections: state.vpsConnections,
+    ledger: {
+      installed: Boolean(state.ledgerActive.vps_main),
+      active: Boolean(state.ledgerActive.vps_main),
+      day: new Date().toISOString().slice(0, 10),
+      month: new Date().toISOString().slice(0, 7),
+      updatedAt: Math.floor(Date.now() / 1000),
+      users: structuredClone(state.ledgerUsers.vps_main || {}),
+    },
     recentLogSummary: {
       Alice: { count: 42, sourceIPs: ['198.51.100.81', '198.51.100.82'], suspiciousHosts: [] },
       Bob: { count: 29, sourceIPs: ['203.0.113.105'], suspiciousHosts: [] },
@@ -807,6 +831,14 @@ export async function demoInvoke(cmd, args = {}) {
           connections: enabled
             ? [{ id: 'nc1', user: 'Alice', sourceIP: '203.0.113.88', host: 'chatgpt.com', port: '443', network: 'tcp', upload: 819200, download: 14680064, suspicious: false }]
             : [],
+          ledger: {
+            installed: Boolean(state.ledgerActive[args.nodeId]),
+            active: Boolean(state.ledgerActive[args.nodeId]),
+            day: new Date().toISOString().slice(0, 10),
+            month: new Date().toISOString().slice(0, 7),
+            updatedAt: Math.floor(Date.now() / 1000),
+            users: structuredClone(state.ledgerUsers[args.nodeId] || {}),
+          },
         },
       };
     }
@@ -816,6 +848,61 @@ export async function demoInvoke(cmd, args = {}) {
       return { ok: true, message: `[演示模式] NAT 本地监控已${args.enable ? '开启' : '关闭'}` };
 
     case 'close_nat_alpine_conn':
+      return { ok: true };
+
+    case 'manage_node_ledger': {
+      const nid = args.nodeId || 'vps_main';
+      if (args.action === 'install') {
+        state.ledgerActive[nid] = true;
+        return { ok: true, message: '[演示模式] 已开启持久化流量账本' };
+      }
+      if (args.action === 'disable') {
+        state.ledgerActive[nid] = false;
+        return { ok: true, message: '[演示模式] 已停用持久化流量账本' };
+      }
+      if (args.action === 'reset_user') {
+        const map = state.ledgerUsers[nid] || {};
+        if (args.username === '__ALL__') {
+          Object.keys(map).forEach((k) => {
+            map[k] = { todayUp: 0, todayDown: 0, monthUp: 0, monthDown: 0, totalUp: 0, totalDown: 0 };
+          });
+        } else if (map[args.username]) {
+          map[args.username] = { todayUp: 0, todayDown: 0, monthUp: 0, monthDown: 0, totalUp: 0, totalDown: 0 };
+        }
+        return { ok: true, message: `[演示模式] 已清零「${args.username}」流量计数` };
+      }
+      return { ok: true };
+    }
+
+    case 'save_member_quota': {
+      const key = `${args.nodeId}::${args.username}`;
+      if (!state.config.memberQuotasGb) state.config.memberQuotasGb = {};
+      if (Number(args.quotaGb) > 0) state.config.memberQuotasGb[key] = Number(args.quotaGb);
+      else delete state.config.memberQuotasGb[key];
+      return { ok: true, memberQuotasGb: structuredClone(state.config.memberQuotasGb) };
+    }
+
+    case 'open_remote_singbox_panel':
+      return { ok: true, localPort: 19999, remotePort: 19090, message: '[演示模式] 已模拟建立加密 SSH 回环隧道 (127.0.0.1:19999)' };
+
+    case 'poll_remote_singbox_panel':
+      return {
+        ok: true,
+        nodeId: args.nodeId || 'vps_main',
+        nodeName: state.config.name,
+        localPort: 19999,
+        remotePort: 19090,
+        secret: 'demo-secret',
+        version: 'sing-box 1.14.4 (Demo)',
+        memory: 28311552,
+        uploadTotal: 1288490188,
+        downloadTotal: 9663676416,
+        connections: [],
+        rules: [{ type: 'AuthUser', payload: 'Alice', proxy: 'direct' }],
+      };
+
+    case 'close_remote_singbox_panel':
+    case 'close_remote_singbox_panel_conn':
       return { ok: true };
 
     case 'get_nat_exit_status':
@@ -999,6 +1086,25 @@ export async function demoInvoke(cmd, args = {}) {
     case 'save_export_presets':
       state.config.exportPresets = structuredClone(args.presets || []);
       return { ok: true, exportPresets: structuredClone(state.config.exportPresets) };
+
+    case 'save_terminal_snippets':
+      state.config.terminalSnippets = structuredClone(args.snippets || []);
+      return { ok: true, terminalSnippets: structuredClone(state.config.terminalSnippets) };
+
+    case 'pty_open':
+      return {
+        ok: true,
+        sessionId: `pty_demo_${Date.now().toString(36)}`,
+        nodeId: args.nodeId || 'vps_main',
+        nodeName: state.config.name,
+        host: state.config.host,
+        port: state.config.sshPort || 22,
+      };
+
+    case 'pty_write':
+    case 'pty_resize':
+    case 'pty_close':
+      return { ok: true };
 
     case 'close_mihomo_conn':
       state.mihomo.connections = args.id === '__ALL__'

@@ -1,17 +1,19 @@
-# NodeDeck v1.2.1 Security-Critical Source & Agent SHA-256 Checksums
-# Generated directly from clean repository working tree before release tag v1.2.1
+# NodeDeck v1.4.0 Security-Critical Source & Agent SHA-256 Checksums
+# Generated directly from clean repository working tree before release tag v1.4.0
 # Note: Binary installers (Windows .exe/.zip & macOS arm64/x64 .dmg) checksums are published
 # automatically by GitHub Actions in each Release's SHA256SUMS.txt asset.
 
-48924fab8b5e1c2da076327b7df212d412038b8916c8a9766e9ab599177686e2  src-tauri/assets/remote_agent.py
-4a80bff0944ae46001643b4ba6659be9b58cf3c1249c812743f1a1e30e018f04  src-tauri/assets/remote_agent_alpine.sh
-a643273b2960a89680dbbab631dcdff297719885791626b1aee46c23985ee630  src-tauri/src/lib.rs
-806967cfdb26deb2bc5baa8ab36bfa600fe85ab5863d0d5bf3be30aa8527cc58  src-tauri/src/commands.rs
-d135dc7b47e258812e260428d0fc47423463db02ad1a524db88d5ab7f961b35e  src-tauri/src/config.rs
+90656d8119617ed0a38a4ac51401e99ff14360e2c2dd9d3e76643c978113ecd5  src-tauri/assets/remote_agent.py
+69045616f5c78c89fc6ab7179552450f50be66eeab621268be4de6a727b7b042  src-tauri/assets/remote_agent_alpine.sh
+32c28ac426b1dc4db89e98279322c2bba887270981c6b224008bd6a5a04a664e  src-tauri/src/lib.rs
+2951786d375f0e878ac007ca4e45b7c028e3988b8c51af4799daa24987eec310  src-tauri/src/commands.rs
+7e8aa1be5f8942804b92d994b3315498fb1b147b04d605749ca9928e68c2decc  src-tauri/src/config.rs
 8160295e25105df0d3eb031a7a2fc7d36ae488c4b0cb4cc56a508aa831fe062d  src-tauri/src/mihomo.rs
-ae27b0abf26ffd4dd3260eb1e7c15b1d83a97f5e83d750e0ad931a938468aae4  src-tauri/src/ssh_client.rs
-6520acc6c10c759b7d220a3b3317f3fbc7ca76455b98b26609b4f96daed3b240  src-tauri/src/accounts.rs
-71ed9af8468d40a46e163ab59c76224a7ff0052939055ac685c8aee04f5dda8b  src/utils/client-export.js
+c6c0127dc196644553ad9e93c77270f59dc90f6315350ddd1896546ec5dc601e  src-tauri/src/ssh_client.rs
+8f46ae06f9bfb034141c687c81b1b6f72e2c4c15477eb0a6eee93d063b804d31  src-tauri/src/accounts.rs
+ca488eba12430e7c25945853f9a1f4ad70e16834e7a794898c367ed6e502fe2b  src-tauri/src/tunnel.rs
+493ba3b7289b2dea91ab820ec7be8b182ab2b146ded807ba063a9f0faea51b41  src-tauri/src/terminal.rs
+5f1a60a702825a06ae2ee1ab46e47c323257647ef9cc75b29a9b3a29f06cead5  src/utils/client-export.js
 5ce31fbff52a0418a495d290d8c0af6b242450231dbe3cc70e42d3841578c765  src/utils/qrcode.js
 35da49380412a8a77c838555e5ed98b65a0abbe4bf94996b158828497beb161d  scripts/privacy-check.mjs
-0edf60e0da668e12199d06b47193e083d0df96ecf393a508765cf80afbea796d  scripts/verify-all.mjs
+4b3c1ab1eb4304d05add24839333f0c7e95848f049e75e8cd56d358470674130  scripts/verify-all.mjs

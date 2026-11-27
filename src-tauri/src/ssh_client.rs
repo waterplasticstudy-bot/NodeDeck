@@ -266,87 +266,150 @@ impl PersistentSshClient {
         }
     }
 
-    /// 串行执行一次远端 JSON-RPC 调用；若连接断开自动销毁以便下次重建
+    fn is_idempotent_read_op(op: &str) -> bool {
+        matches!(
+            op,
+            "ping" | "overview" | "users" | "audit" | "logs" | "ipcheck" | "sb_config" | "clash_info"
+        )
+    }
+
+    /// 串行执行一次远端 JSON-RPC 调用；切代理/网络抖动导致断链时自动静默重建（写操作仅在未发出前重建，绝不盲重试）
     pub async fn call(
         &self,
         op: &str,
         params: Value,
         timeout_ms: u64,
     ) -> Result<(Value, u64), SshError> {
-        let mut guard = self.session.lock().await;
-        if guard.is_none() {
-            *guard = Some(Self::connect_fresh().await?);
+        enum CallIoErr {
+            WriteFailed(std::io::Error),
+            ReadFailed(std::io::Error),
         }
 
-        let sess = guard.as_mut().expect("session initialized");
-        sess.seq += 1;
-        let req_id = sess.seq;
-        let req_line = format!(
-            "{}\n",
-            json!({ "id": req_id, "op": op, "params": params })
-        );
-        let started = Instant::now();
+        let mut guard = self.session.lock().await;
+        let is_read = Self::is_idempotent_read_op(op);
 
-        let io_result = timeout(Duration::from_millis(timeout_ms), async {
-            sess.stdin.write_all(req_line.as_bytes()).await?;
-            sess.stdin.flush().await?;
-            let mut line = String::new();
-            loop {
-                line.clear();
-                let n = sess.reader.read_line(&mut line).await?;
-                if n == 0 {
-                    return Ok::<Option<Value>, std::io::Error>(None);
-                }
-                if let Ok(val) = serde_json::from_str::<Value>(line.trim()) {
-                    if val.get("id").and_then(Value::as_u64) == Some(req_id) {
-                        return Ok(Some(val));
+        for attempt in 0..2u8 {
+            // 若旧长连接子进程已退出（如切代理被踢断），发送前直接清理重建，读写操作均受益
+            if let Some(sess) = guard.as_mut() {
+                if matches!(sess.child.try_wait(), Ok(Some(_))) {
+                    if let Some(mut dead) = guard.take() {
+                        let _ = dead.child.kill().await;
                     }
                 }
             }
-        })
-        .await;
 
-        let elapsed_ms = started.elapsed().as_millis() as u64;
-        match io_result {
-            Ok(Ok(Some(msg))) => {
-                if msg.get("ok").and_then(Value::as_bool) == Some(true) {
-                    Ok((msg.get("result").cloned().unwrap_or(Value::Null), elapsed_ms))
-                } else {
-                    let err_str = msg
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("远端执行失败");
-                    Err(SshError::new("REMOTE_ERROR", err_str, None))
-                }
+            let reused = guard.is_some();
+            if guard.is_none() {
+                *guard = Some(Self::connect_fresh().await?);
             }
-            Ok(Ok(None)) => {
-                let stderr_text = sess.stderr_snapshot();
-                if let Some(mut dead) = guard.take() {
-                    let _ = dead.child.kill().await;
+
+            let sess = guard.as_mut().expect("session initialized");
+            sess.seq += 1;
+            let req_id = sess.seq;
+            let req_line = format!(
+                "{}\n",
+                json!({ "id": req_id, "op": op, "params": params })
+            );
+            let started = Instant::now();
+
+            let io_result = timeout(Duration::from_millis(timeout_ms), async {
+                sess.stdin
+                    .write_all(req_line.as_bytes())
+                    .await
+                    .map_err(CallIoErr::WriteFailed)?;
+                sess.stdin.flush().await.map_err(CallIoErr::WriteFailed)?;
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    let n = sess
+                        .reader
+                        .read_line(&mut line)
+                        .await
+                        .map_err(CallIoErr::ReadFailed)?;
+                    if n == 0 {
+                        return Ok::<Option<Value>, CallIoErr>(None);
+                    }
+                    if let Ok(val) = serde_json::from_str::<Value>(line.trim()) {
+                        if val.get("id").and_then(Value::as_u64) == Some(req_id) {
+                            return Ok(Some(val));
+                        }
+                    }
                 }
-                Err(Self::classify_error(&stderr_text))
-            }
-            Ok(Err(e)) => {
-                if let Some(mut dead) = guard.take() {
-                    let _ = dead.child.kill().await;
+            })
+            .await;
+
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            match io_result {
+                Ok(Ok(Some(msg))) => {
+                    if msg.get("ok").and_then(Value::as_bool) == Some(true) {
+                        return Ok((msg.get("result").cloned().unwrap_or(Value::Null), elapsed_ms));
+                    } else {
+                        let err_str = msg
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("远端执行失败");
+                        return Err(SshError::new("REMOTE_ERROR", err_str, None));
+                    }
                 }
-                Err(SshError::new(
-                    "SSH_ERROR",
-                    format!("SSH 通信异常，已重置连接: {e}"),
-                    None,
-                ))
-            }
-            Err(_) => {
-                if let Some(mut dead) = guard.take() {
-                    let _ = dead.child.kill().await;
+                Ok(Ok(None)) => {
+                    let stderr_text = sess.stderr_snapshot();
+                    if let Some(mut dead) = guard.take() {
+                        let _ = dead.child.kill().await;
+                    }
+                    let classified = Self::classify_error(&stderr_text);
+                    if attempt == 0 && is_read && classified.code != "AUTH_FAILED" {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(classified);
                 }
-                Err(SshError::new(
-                    "SSH_TIMEOUT",
-                    "远端响应超时，已自动重置长连接，请重试",
-                    None,
-                ))
+                Ok(Err(CallIoErr::WriteFailed(e))) => {
+                    if let Some(mut dead) = guard.take() {
+                        let _ = dead.child.kill().await;
+                    }
+                    if attempt == 0 && reused {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(SshError::new(
+                        "SSH_ERROR",
+                        format!("SSH 发送异常，已重置连接: {e}"),
+                        None,
+                    ));
+                }
+                Ok(Err(CallIoErr::ReadFailed(e))) => {
+                    if let Some(mut dead) = guard.take() {
+                        let _ = dead.child.kill().await;
+                    }
+                    if attempt == 0 && is_read {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(SshError::new(
+                        "SSH_ERROR",
+                        format!("SSH 通信异常，已重置连接: {e}"),
+                        None,
+                    ));
+                }
+                Err(_) => {
+                    if let Some(mut dead) = guard.take() {
+                        let _ = dead.child.kill().await;
+                    }
+                    // 旧复用连接遇到半开僵尸 TCP（切代理常见），对只读操作自动静默重建重试 1 次
+                    if attempt == 0 && reused && is_read {
+                        tokio::time::sleep(Duration::from_millis(180)).await;
+                        continue;
+                    }
+                    return Err(SshError::new(
+                        "SSH_TIMEOUT",
+                        "远端响应超时，已自动重置长连接，请重试",
+                        None,
+                    ));
+                }
             }
         }
+
+        Err(SshError::new("SSH_ERROR", "SSH 长连接重连失败", None))
     }
 }
 

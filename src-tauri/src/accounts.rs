@@ -107,12 +107,12 @@ pub fn has_isolated_session(app: &AppHandle, profile_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 打开或复用指定账号的独立 Cookie/Storage WebView2 沙箱窗口（同站多号永久不串号）
-pub async fn open_isolated_window(
+async fn open_isolated_window_inner(
     app: &AppHandle,
     profile_id: &str,
     title: &str,
     url_str: &str,
+    visible: bool,
 ) -> Result<Value, SshError> {
     let safe_id = validate_profile_id(profile_id)?;
     let parsed = validate_http_url(url_str)?;
@@ -122,9 +122,11 @@ pub async fn open_isolated_window(
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.set_title(title);
         let _ = existing.navigate(parsed);
-        let _ = existing.show();
-        let _ = existing.unminimize();
-        let _ = existing.set_focus();
+        if visible {
+            let _ = existing.show();
+            let _ = existing.unminimize();
+            let _ = existing.set_focus();
+        }
         return Ok(json!({
             "ok": true,
             "reused": true,
@@ -140,7 +142,8 @@ pub async fn open_isolated_window(
         .title(title)
         .inner_size(ACCOUNT_WINDOW_WIDTH, ACCOUNT_WINDOW_HEIGHT)
         .center()
-        .resizable(true);
+        .resizable(true)
+        .visible(visible);
 
     #[cfg(target_os = "macos")]
     {
@@ -168,6 +171,16 @@ pub async fn open_isolated_window(
         "label": label,
         "profileDir": profile_dir.to_string_lossy()
     }))
+}
+
+/// 打开或复用指定账号的独立 Cookie/Storage WebView2 沙箱窗口（同站多号永久不串号）
+pub async fn open_isolated_window(
+    app: &AppHandle,
+    profile_id: &str,
+    title: &str,
+    url_str: &str,
+) -> Result<Value, SshError> {
+    open_isolated_window_inner(app, profile_id, title, url_str, true).await
 }
 
 /// 关闭指定账号子窗口并彻底删除其本地 Cookie/缓存目录
@@ -202,7 +215,7 @@ pub async fn clear_isolated_session(app: &AppHandle, profile_id: &str) -> Result
 /// 在已打开的独立仪表盘窗口内只读识别页面渲染出的流量与到期信息（免订阅链接、零 IPC 暴露）
 const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
   try {
-    var txt = (document.body && document.body.innerText) ? document.body.innerText : '';
+    var txt = (document.body && (document.body.innerText || document.body.textContent)) ? (document.body.innerText || document.body.textContent) : '';
     var href = String(location.href || '');
     var title = String(document.title || '');
     if (!txt || txt.trim().length < 20) {
@@ -233,8 +246,9 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
     }
     function hasTrafficTabButton() {
       if (typeof document === 'undefined' || !document.querySelectorAll) return false;
-      var btns = document.querySelectorAll('button, a, [role="tab"]');
+      var btns = document.querySelectorAll('button, a, [role="tab"], [class*="tab" i]');
       for (var i = 0; i < btns.length; i++) {
+        if (btns[i].children && btns[i].children.length > 2) continue;
         var label = (btns[i].innerText || btns[i].textContent || '').trim();
         if (/^(流量|流量统计|流量详情|Traffic)$/i.test(label)) return true;
       }
@@ -267,6 +281,12 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
       var lineEnd = txt.indexOf('\n', startIdx + pm[0].length);
       var localLine = txt.slice(lineStart + 1, lineEnd === -1 ? txt.length : lineEnd);
       var nearCtx = txt.slice(prevLineStart + 1, lineEnd === -1 ? txt.length : lineEnd);
+      if (localLine.length > 160) {
+        localLine = txt.slice(Math.max(0, startIdx - 48), Math.min(txt.length, startIdx + pm[0].length + 48));
+      }
+      if (nearCtx.length > 260) {
+        nearCtx = txt.slice(Math.max(0, startIdx - 96), Math.min(txt.length, startIdx + pm[0].length + 64));
+      }
 
       if (hwNoiseRe.test(localLine) || hwNoiseRe.test(beforeChunk.slice(-36))) continue;
       if (/(入站\s*\/\s*出站|出站\s*\/\s*入站|上行\s*\/\s*下行|上传\s*\/\s*下载|Up\s*\/\s*Down|Rx\s*\/\s*Tx)/i.test(nearCtx)) continue;
@@ -303,7 +323,7 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
       var bestUsedLen = 999, bestRemLen = 999, bestTotalScore = -1, bestTotalLen = 999, bestExpLen = 999;
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
-        var t = (el.innerText || '').trim();
+        var t = (el.innerText || el.textContent || '').trim();
         if (!t || t.length > 72) continue;
         if (!matchedPair && !hwNoiseRe.test(t) && !dirNoiseRe.test(t)) {
           var sm = t.match(sizeRe);
@@ -314,7 +334,7 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
               if (t.length < bestUsedLen) { bestUsedLen = t.length; usedBytes = b; usedText = cleanTxt; }
             } else if (/(剩余流量|可用流量|剩余|Remaining)/i.test(t) && !/(已用|总流量|套餐流量|总额度)/.test(t)) {
               if (t.length < bestRemLen) { bestRemLen = t.length; remBytes = b; remText = cleanTxt; }
-            } else if (/(总流量|套餐流量|总额度|流量配额|月流量)/i.test(t) && !/(已用|剩余)/.test(t)) {
+            } else if (/(总流量|套餐流量|总额度|流量配额|每月流量|月流量配额|月配额)/i.test(t) && !/(已用|剩余|本月流量)/.test(t)) {
               if (b >= 104857600 && (2 > bestTotalScore || (2 === bestTotalScore && t.length < bestTotalLen))) {
                 bestTotalScore = 2; bestTotalLen = t.length; totalBytes = b; totalText = cleanTxt;
               }
@@ -348,7 +368,7 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
         if (r1) { remBytes = toBytes(r1[1], r1[2]); remText = r1[1].replace(/,/g, '') + ' ' + r1[2].toUpperCase(); }
       }
       if (!totalBytes) {
-        var t1 = txt.match(/(?:总流量|套餐流量|总额度|流量配额|月流量)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
+        var t1 = txt.match(/(?:总流量|套餐流量|总额度|流量配额|每月流量|月流量配额|月配额)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
           || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:总流量|套餐流量|总额度|流量配额)/i);
         if (t1) {
           var candT = toBytes(t1[1], t1[2]);
@@ -381,7 +401,7 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
       } else if (!totalBytes && usedBytes > 0 && remBytes > 0) {
         totalBytes = usedBytes + remBytes;
         totalText = fmtSize(totalBytes);
-      } else if (!totalBytes && remBytes > 0) {
+      } else if (!totalBytes && remBytes >= 1073741824) {
         totalBytes = remBytes;
         totalText = remText;
         usedBytes = 0;
@@ -393,11 +413,13 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
       }
     }
 
-    if (!totalBytes) {
+    var hasTab = hasTrafficTabButton();
+    // 若页面存在独立的「流量」子标签且尚未命中明确的「已用 / 总配额」配对，绝不采信信息页的弱单值兜底，强制先切到流量标签
+    if (!totalBytes || (!matchedPair && hasTab)) {
       var looksLogin = /\/login|sign\s*in|立即登录|账号登录|just a moment|verify you are human|人机验证/i.test(txt + ' ' + href + ' ' + title);
       return JSON.stringify({
         status: looksLogin ? 'need_login' : 'not_found',
-        hasTrafficTab: !looksLogin && hasTrafficTabButton(),
+        hasTrafficTab: !looksLogin && hasTab,
         href: href,
         title: title
       });
@@ -432,12 +454,14 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
 /// 当详情页默认停在「信息」等非流量标签时，仅精确点击只读「流量」标签（绝不误触任何操作按钮）
 const AUTO_SWITCH_TRAFFIC_TAB_JS: &str = r#"(function(){
   try {
-    var btns = document.querySelectorAll('button, a, [role="tab"]');
+    var btns = document.querySelectorAll('button, a, [role="tab"], [class*="tab" i]');
     for (var i = 0; i < btns.length; i++) {
       var el = btns[i];
+      if (el.children && el.children.length > 2) continue;
       var label = (el.innerText || el.textContent || '').trim();
       if (/^(流量|流量统计|流量详情|Traffic)$/i.test(label)) {
-        el.click();
+        var target = el.closest ? (el.closest('button, a, [role="tab"]') || el) : el;
+        target.click();
         return 'clicked';
       }
     }
@@ -485,82 +509,195 @@ async fn eval_scrape_once(win: &tauri::WebviewWindow) -> Result<Value, SshError>
     Ok(parsed)
 }
 
+fn urls_same_target(cur: &Url, target: &Url) -> bool {
+    let same_host = cur
+        .host_str()
+        .zip(target.host_str())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+    if !same_host {
+        return false;
+    }
+    let cp = cur.path().trim_end_matches('/');
+    let tp = target.path().trim_end_matches('/');
+    if tp.is_empty() {
+        true
+    } else {
+        cp == tp || cp.starts_with(&format!("{tp}/"))
+    }
+}
+
 pub async fn scrape_window_traffic(
     app: &AppHandle,
     profile_id: &str,
     title: &str,
     url_str: &str,
+    silent_only: bool,
 ) -> Result<ScrapeOutcome, SshError> {
     let safe_id = validate_profile_id(profile_id)?;
     let label = format!("{ACCOUNT_WINDOW_PREFIX}{safe_id}");
-
-    let Some(win) = app.get_webview_window(&label) else {
-        if !url_str.trim().is_empty() {
-            open_isolated_window(app, &safe_id, title, url_str).await?;
-        }
-        return Ok(ScrapeOutcome::NeedsWindowReady(
-            "已为你打开独立仪表盘窗口，请确认已登录并停留在显示流量的页面，再点一次「识别流量」".to_string(),
-        ));
+    let target_url = if url_str.trim().is_empty() {
+        None
+    } else {
+        Some(validate_http_url(url_str)?)
     };
 
-    let _ = win.show();
-    let _ = win.unminimize();
+    let mut created_hidden = false;
+    let mut just_navigated = false;
 
-    let mut parsed = eval_scrape_once(&win).await?;
+    let win = if let Some(existing) = app.get_webview_window(&label) {
+        if let Some(ref target) = target_url {
+            let need_nav = match existing.url() {
+                Ok(cur) => !urls_same_target(&cur, target),
+                Err(_) => true,
+            };
+            if need_nav {
+                if silent_only {
+                    // 静默自动同步时绝不打断用户正在操作的已打开窗口
+                    return Ok(ScrapeOutcome::NeedsWindowReady("窗口当前正停留在其他页面，已跳过静默自动同步".to_string()));
+                }
+                let _ = existing.set_title(title);
+                let _ = existing.navigate(target.clone());
+                just_navigated = true;
+            }
+        }
+        existing
+    } else {
+        if target_url.is_none() {
+            return Err(SshError::new(
+                "VALIDATION_ERROR",
+                "请先在卡片编辑中填写官网控制台 URL",
+                None,
+            ));
+        }
+        // 已保存登录态时后台静默打开并自动跳转识别，全程一键完成、零打扰；仅需重新登录时才弹出窗口
+        let has_sess = has_isolated_session(app, &safe_id);
+        if silent_only && !has_sess {
+            return Ok(ScrapeOutcome::NeedsWindowReady("尚未登录该账号沙箱，已跳过静默同步".to_string()));
+        }
+        open_isolated_window_inner(app, &safe_id, title, url_str, !has_sess).await?;
+        created_hidden = has_sess;
+        just_navigated = true;
+        let Some(fresh) = app.get_webview_window(&label) else {
+            return Err(SshError::new("WINDOW_ERR", "无法获取独立隔离窗口句柄", None));
+        };
+        fresh
+    };
 
-    // 若当前停留在实例「信息」等标签页且页面存在只读「流量」标签，自动切换并等待渲染后重抓
-    if parsed.get("status").and_then(Value::as_str) == Some("not_found")
-        && parsed.get("hasTrafficTab").and_then(Value::as_bool) == Some(true)
-    {
-        let _ = win.eval(AUTO_SWITCH_TRAFFIC_TAB_JS);
-        for wait_ms in [900u64, 1100u64] {
-            tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-            parsed = eval_scrape_once(&win).await?;
-            if parsed.get("status").and_then(Value::as_str) == Some("ok") {
-                break;
+    if just_navigated {
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+    }
+
+    let mut clicked_traffic_tab = false;
+    let mut last_parsed = Value::Null;
+    let max_attempts: usize = if just_navigated { 14 } else { 6 };
+
+    for attempt in 0..max_attempts {
+        match eval_scrape_once(&win).await {
+            Ok(parsed) => {
+                let status = parsed.get("status").and_then(Value::as_str).unwrap_or("error");
+                last_parsed = parsed.clone();
+                match status {
+                    "ok" => {
+                        if created_hidden {
+                            let _ = win.close();
+                        }
+                        let now_label = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs().to_string())
+                            .unwrap_or_default();
+                        return Ok(ScrapeOutcome::Captured(TrafficSnapshot {
+                            used_bytes: parsed.get("usedBytes").and_then(Value::as_u64).unwrap_or(0),
+                            total_bytes: parsed.get("totalBytes").and_then(Value::as_u64).unwrap_or(0),
+                            used_text: parsed.get("usedText").and_then(Value::as_str).unwrap_or("").to_string(),
+                            total_text: parsed.get("totalText").and_then(Value::as_str).unwrap_or("").to_string(),
+                            percent: parsed.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
+                            cycle_text: parsed.get("cycleText").and_then(Value::as_str).unwrap_or("").to_string(),
+                            expires_at: parsed.get("expiresAt").and_then(Value::as_str).unwrap_or("").to_string(),
+                            synced_at: now_label,
+                            source: "dashboard".to_string(),
+                        }));
+                    }
+                    "need_login" => {
+                        if silent_only {
+                            if created_hidden {
+                                let _ = win.close();
+                            }
+                            return Ok(ScrapeOutcome::NeedsWindowReady("会话已过期，需手动登录".to_string()));
+                        }
+                        let _ = win.show();
+                        let _ = win.unminimize();
+                        let _ = win.set_focus();
+                        return Ok(ScrapeOutcome::NeedsWindowReady(
+                            "检测到独立窗口尚未登录或会话已过期，已为你弹出窗口，完成登录后再点一次「同步流量」即可".to_string(),
+                        ));
+                    }
+                    "not_found" => {
+                        if parsed.get("hasTrafficTab").and_then(Value::as_bool) == Some(true)
+                            && !clicked_traffic_tab
+                        {
+                            let _ = win.eval(AUTO_SWITCH_TRAFFIC_TAB_JS);
+                            clicked_traffic_tab = true;
+                            tokio::time::sleep(Duration::from_millis(950)).await;
+                            continue;
+                        }
+                        // 刚跳转的 SPA 仪表盘可能仍在异步拉取接口，允许继续短暂等待
+                        if attempt + 1 < max_attempts && (just_navigated || clicked_traffic_tab) {
+                            tokio::time::sleep(Duration::from_millis(700)).await;
+                            continue;
+                        }
+                        break;
+                    }
+                    "empty" => {
+                        if attempt + 1 < max_attempts {
+                            tokio::time::sleep(Duration::from_millis(650)).await;
+                            continue;
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            Err(_) if attempt + 1 < max_attempts => {
+                tokio::time::sleep(Duration::from_millis(650)).await;
+            }
+            Err(e) => {
+                if created_hidden {
+                    if silent_only {
+                        let _ = win.close();
+                    } else {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }
+                return Err(e);
             }
         }
     }
 
-    let status = parsed.get("status").and_then(Value::as_str).unwrap_or("error");
-    match status {
-        "ok" => {
-            let now_label = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs().to_string())
-                .unwrap_or_default();
-            Ok(ScrapeOutcome::Captured(TrafficSnapshot {
-                used_bytes: parsed.get("usedBytes").and_then(Value::as_u64).unwrap_or(0),
-                total_bytes: parsed.get("totalBytes").and_then(Value::as_u64).unwrap_or(0),
-                used_text: parsed.get("usedText").and_then(Value::as_str).unwrap_or("").to_string(),
-                total_text: parsed.get("totalText").and_then(Value::as_str).unwrap_or("").to_string(),
-                percent: parsed.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
-                cycle_text: parsed.get("cycleText").and_then(Value::as_str).unwrap_or("").to_string(),
-                expires_at: parsed.get("expiresAt").and_then(Value::as_str).unwrap_or("").to_string(),
-                synced_at: now_label,
-                source: "dashboard".to_string(),
-            }))
+    if silent_only {
+        if created_hidden {
+            let _ = win.close();
         }
-        "need_login" => {
-            let _ = win.set_focus();
-            Ok(ScrapeOutcome::NeedsWindowReady(
-                "检测到独立窗口仍停留在登录或验证页，请先完成登录进入仪表盘/流量页后，再点一次「识别流量」".to_string(),
-            ))
-        }
-        "not_found" => {
-            let _ = win.set_focus();
-            Ok(ScrapeOutcome::NeedsWindowReady(
-                "当前页面未检测到流量数值，请切换至显示已用/剩余流量的页面后再点一次「识别流量」".to_string(),
-            ))
-        }
-        _ => {
-            let msg = parsed
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未能读取仪表盘页面内容");
-            Err(SshError::new("SCRAPE_ERR", msg, None))
-        }
+        return Ok(ScrapeOutcome::NeedsWindowReady("静默同步未就绪，已保留上次记录".to_string()));
     }
+
+    let _ = win.show();
+    let _ = win.unminimize();
+    let _ = win.set_focus();
+    let status = last_parsed
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("not_found");
+    if status == "error" {
+        let msg = last_parsed
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未能读取仪表盘页面内容");
+        return Err(SshError::new("SCRAPE_ERR", msg, None));
+    }
+    Ok(ScrapeOutcome::NeedsWindowReady(
+        "已自动打开目标控制台窗口，请确认已登录并显示流量后再次点击「同步流量」".to_string(),
+    ))
 }
 
 /// 可选手动单次查询标准 subscription-userinfo 响应头（仅读响应头不落盘节点内容，绝不后台轮询）

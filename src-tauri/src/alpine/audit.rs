@@ -82,16 +82,44 @@ pub async fn configure_alpine_audit(
     Ok(json!({ "ok": true, "message": msg }))
 }
 
-/// 单次 SSH 读取 NAT 配置与实时连接，并补齐疑似定位域名标注（与主 VPS 审计能力齐平）
+/// 单次 SSH 读取 NAT 配置、实时连接与持久化流量账本，并补齐疑似定位域名标注（与主 VPS 审计能力齐平）
 pub async fn fetch_alpine_audit(
     node: &NatNodeConfig,
     fallback_key_path: &str,
 ) -> Result<Value, SshError> {
     let (bundle, _) = exec_alpine_script(node, fallback_key_path, "audit_bundle", None).await?;
-    let (raw_cfg, raw_conn) = bundle
+    let (before_ledger, raw_ledger_part) = bundle
+        .split_once("\n===NODEDECK_LEDGER===")
+        .unwrap_or((bundle.as_str(), ""));
+    let (raw_cfg, raw_conn) = before_ledger
         .split_once("\n===NODEDECK_AUDIT===")
         .map(|(a, b)| (a.trim(), b.trim()))
-        .unwrap_or((bundle.trim(), ""));
+        .unwrap_or((before_ledger.trim(), ""));
+
+    let (ledger_meta_str, ledger_json_str) = raw_ledger_part
+        .split_once("\n===NODEDECK_LEDGER_JSON===")
+        .map(|(a, b)| (a.trim(), b.trim()))
+        .unwrap_or((raw_ledger_part.trim(), ""));
+    let mut ledger_installed = false;
+    let mut ledger_active = false;
+    for line in ledger_meta_str.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            match k.trim() {
+                "INSTALLED" => ledger_installed = v.trim() == "true",
+                "ACTIVE" => ledger_active = v.trim() == "true",
+                _ => {}
+            }
+        }
+    }
+    let ledger_parsed: Value = serde_json::from_str(ledger_json_str).unwrap_or_else(|_| json!({}));
+    let ledger_obj = json!({
+        "installed": ledger_installed,
+        "active": ledger_active,
+        "day": ledger_parsed.get("day").and_then(Value::as_str).unwrap_or(""),
+        "month": ledger_parsed.get("month").and_then(Value::as_str).unwrap_or(""),
+        "updatedAt": ledger_parsed.get("updatedAt").and_then(Value::as_u64).unwrap_or(0),
+        "users": ledger_parsed.get("users").cloned().unwrap_or_else(|| json!({}))
+    });
 
     let sc: Value = serde_json::from_str(raw_cfg)
         .map_err(|e| SshError::new("JSON_ERR", format!("解析 NAT sing-box 配置失败: {e}"), None))?;
@@ -126,7 +154,8 @@ pub async fn fetch_alpine_audit(
                 "uploadTotal": 0,
                 "downloadTotal": 0,
                 "connections": [],
-                "userSummary": {}
+                "userSummary": {},
+                "ledger": ledger_obj
             }
         }));
     }
@@ -258,9 +287,74 @@ pub async fn fetch_alpine_audit(
             "downloadTotal": data.get("downloadTotal").and_then(Value::as_u64).unwrap_or(0),
             "connections": norm_conns,
             "userSummary": Value::Object(summary_obj),
-            "recentLogSummary": {}
+            "recentLogSummary": {},
+            "ledger": ledger_obj
         }
     }))
+}
+
+/// 读取 Alpine NAT 的 clash_api 地址与密钥（仅供本机加密 SSH 隧道使用，不暴露前端）
+pub async fn fetch_alpine_clash_info(
+    node: &NatNodeConfig,
+    fallback_key_path: &str,
+) -> Result<(String, String), SshError> {
+    let (out, _) = exec_alpine_script(node, fallback_key_path, "clash_info", None).await?;
+    let mut addr = String::new();
+    let mut secret = String::new();
+    for line in out.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            match k.trim() {
+                "ADDR" => addr = v.trim().to_string(),
+                "SECRET" => secret = v.trim().to_string(),
+                _ => {}
+            }
+        }
+    }
+    Ok((addr, secret))
+}
+
+/// 安装、停用或清零 Alpine NAT 超轻 OpenRC 持久化流量账本
+pub async fn manage_alpine_ledger(
+    node: &NatNodeConfig,
+    fallback_key_path: &str,
+    action: &str,
+    username: Option<&str>,
+    scope: Option<&str>,
+) -> Result<Value, SshError> {
+    match action {
+        "install" => {
+            let (out, _) = exec_alpine_script(node, fallback_key_path, "ledger_install", None).await?;
+            Ok(json!({
+                "ok": true,
+                "message": if out.is_empty() { format!("已为 {} 开启持久化流量账本（<1.5 MB 内存）", node.name) } else { out }
+            }))
+        }
+        "disable" => {
+            let (out, _) = exec_alpine_script(node, fallback_key_path, "ledger_disable", None).await?;
+            Ok(json!({
+                "ok": true,
+                "message": if out.is_empty() { format!("已停用 {} 持久化流量账本（历史数据保留）", node.name) } else { out }
+            }))
+        }
+        "reset_user" => {
+            let sc = match scope.unwrap_or("month") {
+                "all" => "all",
+                _ => "month",
+            };
+            let uname = username.unwrap_or("__ALL__").trim();
+            if uname.is_empty() || uname.contains('|') {
+                return Err(SshError::new("VALIDATION_ERROR", "清零用户名格式无效", None));
+            }
+            let arg = format!("{sc}|{uname}");
+            let (out, _) =
+                exec_alpine_script(node, fallback_key_path, "ledger_reset", Some(&arg)).await?;
+            Ok(json!({
+                "ok": true,
+                "message": if out.is_empty() { format!("已清零 {} 的账本计数", uname) } else { out }
+            }))
+        }
+        _ => Err(SshError::new("VALIDATION_ERROR", "不支持的账本管理操作", None)),
+    }
 }
 
 /// 单次 SSH 直接掐断 NAT 指定或全部连接

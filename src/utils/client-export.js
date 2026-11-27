@@ -32,7 +32,324 @@ export const EXPORT_REGIONS = [
 
 const REGION_MAP = new Map(EXPORT_REGIONS.map((r) => [r.code, r]));
 const DOMAIN_CLEAN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const KEYWORD_CLEAN_RE = /^[a-z0-9._-]{2,64}$/i;
+const PROCESS_CLEAN_RE = /^[a-z0-9._ -]{2,96}$/i;
 const GO_RE2_UNSUPPORTED_RE = /(?:\(\?=|\(\?!|\(\?<=|\(\?<!)/;
+
+/** 内置主流 APP / 服务分流预设目录（纯域名/关键字全平台通用，兼容鸿蒙卓易通/出境易/iOS/Win/Mac，零个人隐私） */
+export const APP_ROUTE_CATALOG = [
+  {
+    id: 'bybit',
+    category: 'finance',
+    name: 'Bybit',
+    icon: '🟡',
+    domains: [
+      'bybit.com', 'bytick.com', 'bybit-global.com', 'bybitglobal.com', 'bycsi.com',
+      'byabcde.com', 'byapps.net', 'bybdc6.com', 'byd3c3.com', 'bycbe.com',
+      'bymj.io', 'byapis.com', 'bybit.biz', 'bybit.cloud', 'bybit.ada.support',
+      'bybit-exchange.github.io',
+    ],
+    keywords: ['bybit'],
+    processes: [],
+    ruleSet: { key: 'app_bybit', path: 'geosite/bybit.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['JP', 'KR', 'TW'],
+    blockedRegions: ['US', 'HK', 'SG', 'CA', 'GB'],
+    note: '严禁美国/香港/新加坡/加拿大/英国 IP；已内置 byd3c3/bybdc6 等轮换域名 + 官方每日更新 geosite/bybit.mrs 防漏',
+  },
+  {
+    id: 'binance',
+    category: 'finance',
+    name: '币安 Binance',
+    icon: '🟡',
+    domains: [
+      'binance.com', 'binance.me', 'binance.info', 'binance.org', 'binance.cloud',
+      'binance.cc', 'binance.co', 'binance.net', 'binance.vision', 'binanceapi.com',
+      'binancecnt.com', 'binancezh.com', 'binancezh.cc', 'binancezh.pro', 'binancezh.top',
+      'binancezh.biz', 'bnbstatic.com', 'bnbchain.org', 'bnappzh.co', 'bnappweb.black',
+      'bmwweb.solutions', 'bsappapi.cc', 'bsappapi.com', 'bscdnweb.com', 'bntrace.com',
+      'nftstatic.com', 'saasexch.com', 'saasexch.co', 'saasexch.cc', 'saasexch.info', 'saasexch.io',
+    ],
+    keywords: ['binance'],
+    processes: [],
+    ruleSet: { key: 'app_binance', path: 'geosite/binance.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['TW', 'JP', 'KR'],
+    blockedRegions: ['US', 'HK', 'SG', 'CA', 'GB'],
+    note: '严禁美国/香港/新加坡/加拿大/英国 IP；已内置全套镜像域名 + 官方每日更新 geosite/binance.mrs 防漏',
+  },
+  {
+    id: 'okx',
+    category: 'finance',
+    name: 'OKX 欧易',
+    icon: '🪙',
+    domains: ['okx.com', 'okex.com', 'oklink.com', 'okx-dns.com', 'okx-dns1.com', 'okx-dns2.com'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_okx', path: 'geosite/okx.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['TW', 'JP', 'KR'],
+    blockedRegions: ['US', 'HK', 'SG'],
+    note: '避开美国/香港/新加坡禁区，含官方 geosite/okx.mrs 规则集',
+  },
+  {
+    id: 'google_pay',
+    category: 'finance',
+    name: 'Google 钱包',
+    icon: '💳',
+    domains: ['pay.google.com', 'wallet.google.com', 'payments.google.com', 'payments-pa.googleapis.com', 'pay.googleapis.com'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP'],
+    blockedRegions: ['HK'],
+    note: '推荐锁定与 Google 账号/发卡地一致的纯净节点',
+  },
+  {
+    id: 'chatgpt',
+    category: 'ai',
+    name: 'ChatGPT',
+    icon: '🤖',
+    domains: ['openai.com', 'chatgpt.com', 'oaistatic.com', 'oaiusercontent.com', 'sora.com', 'livekit.cloud', 'auth0.com'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP', 'KR'],
+    blockedRegions: ['HK'],
+    note: '严禁香港 IP，推荐美国/日本/韩国纯净家宽',
+  },
+  {
+    id: 'claude',
+    category: 'ai',
+    name: 'Claude',
+    icon: '🧠',
+    domains: ['anthropic.com', 'claude.ai', 'claude.com', 'claudeusercontent.com', 'clau.de'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP'],
+    blockedRegions: ['HK'],
+    note: '对 IP 纯净度敏感，严禁香港，推荐美/日家宽落地',
+  },
+  {
+    id: 'gemini',
+    category: 'ai',
+    name: 'Gemini',
+    icon: '✨',
+    domains: ['gemini.google.com', 'aistudio.google.com', 'generativelanguage.googleapis.com', 'aicode.googleapis.com', 'makersuite.google.com', 'alkalimakersuite-pa.clients6.google.com', 'proactivebackend-pa.googleapis.com', 'robinfrontend-pa.googleapis.com', 'ai.google.dev', 'deepmind.google', 'notebooklm.google.com', 'labs.google', 'antigravity.google'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP', 'KR'],
+    blockedRegions: ['HK'],
+    note: '严禁香港 IP，推荐美/日/韩纯净节点',
+  },
+  {
+    id: 'grok',
+    category: 'ai',
+    name: 'Grok',
+    icon: '⚡',
+    domains: ['grok.com', 'x.ai', 'grok.x.ai'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP'],
+    blockedRegions: ['HK'],
+    note: '可单独指定节点，严禁香港',
+  },
+  {
+    id: 'youtube',
+    category: 'social',
+    name: 'YouTube',
+    icon: '🎬',
+    domains: ['youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com', 'ggpht.com'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'airport',
+    defaultFallbackRegions: ['HK', 'TW', 'JP', 'SG'],
+    blockedRegions: [],
+    note: '大流量视频默认走机场直出省 NAT 配额，也可锁特定地区',
+  },
+  {
+    id: 'telegram',
+    category: 'social',
+    name: 'Telegram',
+    icon: '✈️',
+    domains: ['t.me', 'telegram.org', 'telegram.me', 'tdesktop.com', 'telesco.pe'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'airport',
+    defaultFallbackRegions: ['SG', 'HK', 'JP'],
+    blockedRegions: [],
+    note: '推荐低延迟新加坡/香港/日本节点',
+  },
+  {
+    id: 'x_twitter',
+    category: 'social',
+    name: 'X / Twitter',
+    icon: '🐦',
+    domains: ['x.com', 'twitter.com', 'twimg.com', 't.co'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_twitter', path: 'geosite/twitter.mrs' },
+    defaultTargetMode: 'airport',
+    defaultFallbackRegions: ['JP', 'TW', 'US'],
+    blockedRegions: [],
+    note: '日常浏览走机场省流，养号可绑纯净落地（含 geosite/twitter.mrs）',
+  },
+  {
+    id: 'instagram',
+    category: 'social',
+    name: 'Instagram',
+    icon: '📸',
+    domains: ['instagram.com', 'cdninstagram.com', 'ig.me'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_instagram', path: 'geosite/instagram.mrs' },
+    defaultTargetMode: 'airport',
+    defaultFallbackRegions: ['JP', 'TW', 'US'],
+    blockedRegions: [],
+    note: '建议固定地区，减少异地登录风控验证（含 geosite/instagram.mrs）',
+  },
+  {
+    id: 'gmail',
+    category: 'social',
+    name: 'Gmail',
+    icon: '📧',
+    domains: ['mail.google.com', 'gmail.com', 'accounts.google.com'],
+    keywords: [],
+    processes: [],
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['US', 'JP'],
+    blockedRegions: [],
+    note: '账号登录收码推荐锁定稳定纯净节点',
+  },
+  {
+    id: 'tiktok',
+    category: 'social',
+    name: 'TikTok',
+    icon: '🎵',
+    domains: ['tiktok.com', 'tiktokv.com', 'tiktokcdn.com', 'tiktokcdn-us.com', 'musical.ly', 'byteoversea.com', 'ibytedtos.com'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_tiktok', path: 'geosite/tiktok.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['JP', 'TW', 'US'],
+    blockedRegions: ['HK'],
+    note: '严禁香港 IP，推荐锁日本/台湾/美国（含 geosite/tiktok.mrs）',
+  },
+  {
+    id: 'pixiv',
+    category: 'acg',
+    name: 'Pixiv',
+    icon: '🎨',
+    domains: ['pixiv.net', 'pximg.net', 'pixiv.org', 'fanbox.cc', 'booth.pm'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_pixiv', path: 'geosite/pixiv.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['JP', 'TW'],
+    blockedRegions: [],
+    note: '推荐日本/台湾节点，载图更快（含 geosite/pixiv.mrs）',
+  },
+  {
+    id: 'ehviewer',
+    category: 'acg',
+    name: 'EhViewer',
+    icon: '📚',
+    domains: ['e-hentai.org', 'exhentai.org', 'ehgt.org', 'hath.network'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_ehentai', path: 'geosite/ehentai.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['JP', 'DE', 'US'],
+    blockedRegions: ['HK'],
+    note: '部分香港共享 IP 易被限制，推荐日本/德国/纯净节点（含 geosite/ehentai.mrs）',
+  },
+  {
+    id: 'jmcomic',
+    category: 'acg',
+    name: 'JMComic',
+    icon: '📖',
+    domains: ['18comic.vip', '18comic.org', 'jmcomic.me', 'jmcomic1.me', 'jmcomic.one', 'jm365.work', 'jm-comic.cc', 'jm-comic1.cc', 'jm-comic2.cc', 'jm-comic3.cc'],
+    keywords: ['18comic', 'jmcomic'],
+    processes: [],
+    defaultTargetMode: 'airport',
+    defaultFallbackRegions: ['TW', 'HK', 'JP'],
+    blockedRegions: [],
+    note: '自带域名关键字防镜像漏网，推荐走机场高速节点',
+  },
+  {
+    id: 'steam',
+    category: 'acg',
+    name: 'Steam 商店',
+    icon: '🎮',
+    domains: ['steampowered.com', 'steamcommunity.com', 'steamstatic.com', 'steamgames.com', 'steam-chat.com', 'steamusercontent.com'],
+    keywords: [],
+    processes: [],
+    ruleSet: { key: 'app_steam', path: 'geosite/steam.mrs' },
+    defaultTargetMode: 'custom_group',
+    defaultFallbackRegions: ['HK', 'TW', 'JP'],
+    blockedRegions: [],
+    note: '仅分流商店/社区防跨区异常（含 geosite/steam.mrs）',
+  },
+];
+
+const APP_CATALOG_MAP = new Map(APP_ROUTE_CATALOG.map((a) => [a.id, a]));
+const BUILTIN_GROUP_NAMES = new Set([
+  '前置代理', '⚡ 前置测速', '🛡️ 前置稳定', '落地出口', '🔧 运维通道',
+  '🚀 机场直出', '🤖 AI 服务', '🔍 Google 服务', '🎬 YouTube & 流媒体',
+  '💬 Telegram & 社交', '💻 GitHub & 开发', '🐟 漏网之鱼',
+  'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL',
+]);
+
+export function parseCustomTokenList(raw, regex) {
+  const tokens = Array.isArray(raw) ? raw : String(raw || '').split(/[\r\n,;，；]+/);
+  const valid = [];
+  const invalid = [];
+  const seen = new Set();
+  for (const tok of tokens) {
+    const cleaned = String(tok || '').trim();
+    if (!cleaned || cleaned.startsWith('#')) continue;
+    const key = cleaned.toLowerCase();
+    if (regex.test(cleaned)) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        valid.push(cleaned);
+      }
+    } else {
+      invalid.push(cleaned);
+    }
+  }
+  return { valid, invalid };
+}
+
+/** 根据已勾选节点自动为预设 APP 创建防风控初始分流条目（自动跳过禁区国家落地） */
+export function createAppRouteFromPreset(presetId, selectedCtxs = []) {
+  const preset = APP_CATALOG_MAP.get(presetId);
+  if (!preset) return null;
+  const blocked = new Set(preset.blockedRegions || []);
+  const safeLandingKeys = [];
+  for (const c of normalizeCtxList(selectedCtxs)) {
+    const regs = inferRegionsFromCtxs([c]);
+    if (regs.length > 0 && regs.every((r) => !blocked.has(r))) {
+      if (c.key) safeLandingKeys.push(c.key);
+    }
+  }
+  return {
+    id: `app_${preset.id}_${Date.now().toString(36)}`,
+    presetId: preset.id,
+    name: preset.name,
+    icon: preset.icon,
+    domains: [...preset.domains],
+    keywords: [...preset.keywords],
+    processes: [...preset.processes],
+    targetMode: preset.defaultTargetMode || 'custom_group',
+    landingKeys: preset.defaultTargetMode === 'custom_group' ? safeLandingKeys : [],
+    fallbackRegions: [...(preset.defaultFallbackRegions || [])],
+    blockedRegions: [...(preset.blockedRegions || [])],
+  };
+}
 
 export function inferRegionsFromCtxs(ctxs) {
   const list = Array.isArray(ctxs) ? ctxs.filter(Boolean) : ctxs ? [ctxs] : [];
@@ -239,6 +556,8 @@ function buildLandingProxyList(ctxs, extraManagedIps = []) {
   const usedNames = new Set();
   const proxies = [];
   const managedIps = [];
+  const keyToProxyName = new Map();
+  const proxyNameToCtx = new Map();
   const pushIp = (raw) => {
     const ip = String(raw || '').trim();
     if (ip && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) && !managedIps.includes(ip)) {
@@ -260,6 +579,8 @@ function buildLandingProxyList(ctxs, extraManagedIps = []) {
       displayName = `${rawDisplay}-${seq++}`;
     }
     usedNames.add(displayName);
+    if (ctx.key) keyToProxyName.set(ctx.key, displayName);
+    proxyNameToCtx.set(displayName, ctx);
 
     const dialer = ctx.dialerProxy || DEFAULT_DIALER_PROXY;
     const host = String(ctx.host || '').trim();
@@ -320,7 +641,152 @@ function buildLandingProxyList(ctxs, extraManagedIps = []) {
   for (const ip of (Array.isArray(extraManagedIps) ? extraManagedIps : [])) {
     pushIp(ip);
   }
-  return { proxies, managedIps };
+  return { proxies, managedIps, keyToProxyName, proxyNameToCtx };
+}
+
+/** 解析并校验自定义 APP 专属分流列表（支持独立策略组、节点精确绑定、防风控禁区预警与防重名） */
+export function resolveAppRoutes(rawRoutes, ctxs, landingBundle, opts = {}) {
+  const routesIn = Array.isArray(rawRoutes) ? rawRoutes : [];
+  const { proxies = [], keyToProxyName = new Map(), proxyNameToCtx = new Map() } = landingBundle || {};
+  const validProxyNames = new Set(proxies.map((p) => p.name));
+  const exitFb = resolveExitFallback(ctxs, opts);
+  const frontReg = resolveFrontRegion(opts);
+  const usedGroupNames = new Set(BUILTIN_GROUP_NAMES);
+
+  const resolved = [];
+  const errors = [];
+  const warnings = [];
+  let totalRuleEntries = 0;
+
+  for (let i = 0; i < routesIn.length; i += 1) {
+    const raw = routesIn[i];
+    if (!raw || typeof raw !== 'object') continue;
+    const baseName = String(raw.name || '').replace(/[\r\n,]+/g, ' ').trim();
+    if (!baseName) {
+      errors.push(`第 ${i + 1} 条 APP 分流缺少名称`);
+      continue;
+    }
+    const icon = String(raw.icon || '').replace(/[\r\n,]+/g, '').trim();
+    const domainsRes = parseCustomDomainLines(raw.domains);
+    const keywordsRes = parseCustomTokenList(raw.keywords, KEYWORD_CLEAN_RE);
+    const processesRes = parseCustomTokenList(raw.processes, PROCESS_CLEAN_RE);
+
+    if (domainsRes.invalid.length) {
+      errors.push(`APP「${baseName}」含非法域名：${domainsRes.invalid.slice(0, 3).join(', ')}`);
+    }
+    if (keywordsRes.invalid.length) {
+      errors.push(`APP「${baseName}」含非法关键字：${keywordsRes.invalid.slice(0, 2).join(', ')}`);
+    }
+    if (processesRes.invalid.length) {
+      errors.push(`APP「${baseName}」含非法进程名：${processesRes.invalid.slice(0, 2).join(', ')}`);
+    }
+    const ruleCount = domainsRes.valid.length + keywordsRes.valid.length + processesRes.valid.length;
+    if (ruleCount === 0) {
+      errors.push(`APP「${baseName}」至少需要填写 1 个域名、关键字或进程名`);
+      continue;
+    }
+
+    const rawMode = String(raw.targetMode || 'custom_group').trim();
+    const targetMode = ['custom_group', 'exit', 'airport', 'direct', 'reject'].includes(rawMode)
+      ? rawMode
+      : 'custom_group';
+
+    let groupName = '';
+    let groupTarget = '落地出口';
+    if (targetMode === 'exit') {
+      groupTarget = '落地出口';
+    } else if (targetMode === 'airport') {
+      groupTarget = '🚀 机场直出';
+    } else if (targetMode === 'direct') {
+      groupTarget = 'DIRECT';
+    } else if (targetMode === 'reject') {
+      groupTarget = 'REJECT';
+    } else {
+      const rawGroup = icon && !baseName.startsWith(icon) ? `${icon} ${baseName}` : baseName;
+      let candidate = rawGroup;
+      let seq = 2;
+      while (usedGroupNames.has(candidate)) {
+        candidate = `${rawGroup} (${seq++})`;
+      }
+      usedGroupNames.add(candidate);
+      groupName = candidate;
+      groupTarget = candidate;
+    }
+
+    const landingNames = [];
+    for (const lk of (Array.isArray(raw.landingKeys) ? raw.landingKeys : [])) {
+      const mapped = keyToProxyName.get(lk) || (validProxyNames.has(lk) ? lk : '');
+      if (mapped && !landingNames.includes(mapped)) {
+        landingNames.push(mapped);
+      }
+    }
+
+    const fallbackRegions = EXPORT_REGIONS.map((r) => r.code).filter((c) => (raw.fallbackRegions || []).includes(c));
+    const fallbackRe2 = buildRegionRe2(fallbackRegions, true);
+    const fallbackRawPattern = buildRegionRe2(fallbackRegions, false);
+
+    if (targetMode === 'custom_group' && !landingNames.length && !fallbackRegions.length) {
+      warnings.push(`APP「${baseName}」未绑定任何自建落地或备选国家，将临时回退至「落地出口」`);
+    }
+
+    const blockedRegions = EXPORT_REGIONS.map((r) => r.code).filter((c) => (raw.blockedRegions || []).includes(c));
+    if (blockedRegions.length) {
+      const effectiveRegions = new Set();
+      if (targetMode === 'custom_group') {
+        for (const pname of landingNames) {
+          const ctx = proxyNameToCtx.get(pname);
+          if (ctx) inferRegionsFromCtxs([ctx]).forEach((r) => effectiveRegions.add(r));
+        }
+        fallbackRegions.forEach((r) => effectiveRegions.add(r));
+        if (!landingNames.length && !fallbackRegions.length) {
+          inferRegionsFromCtxs(ctxs).forEach((r) => effectiveRegions.add(r));
+          exitFb.regions.forEach((r) => effectiveRegions.add(r));
+        }
+      } else if (targetMode === 'exit') {
+        inferRegionsFromCtxs(ctxs).forEach((r) => effectiveRegions.add(r));
+        exitFb.regions.forEach((r) => effectiveRegions.add(r));
+      } else if (targetMode === 'airport') {
+        if (frontReg.regions.length) frontReg.regions.forEach((r) => effectiveRegions.add(r));
+        else blockedRegions.forEach((r) => effectiveRegions.add(r));
+      }
+      const hits = blockedRegions.filter((r) => effectiveRegions.has(r));
+      if (hits.length) {
+        warnings.push(`🚨 风控预警：「${baseName}」出口包含禁区 (${hits.join('/')})，易触发风控，建议改绑安全地区或专用节点`);
+      }
+    }
+
+    const presetInfo = raw.presetId ? APP_CATALOG_MAP.get(raw.presetId) : null;
+    const ruleSet = presetInfo?.ruleSet || null;
+
+    totalRuleEntries += ruleCount + (ruleSet ? 1 : 0);
+    resolved.push({
+      id: raw.id || `app_${i + 1}`,
+      presetId: raw.presetId || '',
+      name: baseName,
+      icon,
+      groupName,
+      groupTarget,
+      targetMode,
+      landingNames,
+      fallbackRegions,
+      fallbackRe2,
+      fallbackRawPattern,
+      fallbackIncludesUS: fallbackRegions.includes('US'),
+      blockedRegions,
+      ruleSet,
+      domains: domainsRes.valid,
+      keywords: keywordsRes.valid,
+      processes: processesRes.valid,
+    });
+  }
+
+  const ruleProviderMap = new Map();
+  for (const r of resolved) {
+    if (r.ruleSet && !ruleProviderMap.has(r.ruleSet.key)) {
+      ruleProviderMap.set(r.ruleSet.key, r.ruleSet);
+    }
+  }
+  return { routes: resolved, ruleProviders: [...ruleProviderMap.values()], errors, warnings, totalRuleEntries };
 }
 
 function renderProxyYamlBlock(obj, indent = '  ') {
@@ -371,7 +837,8 @@ export function renderSingleProxyYaml(ctx) {
 export function validateExportDraft(ctxs, opts = {}) {
   const list = normalizeCtxList(ctxs);
   const extraIps = opts.includeOpsChannel && opts.includeAllManagedIps ? (opts.extraManagedIps || []) : [];
-  const { proxies, managedIps } = buildLandingProxyList(list, extraIps);
+  const landingBundle = buildLandingProxyList(list, extraIps);
+  const { proxies, managedIps } = landingBundle;
   const isYaml = (opts.format || 'all_platform_yaml') === 'all_platform_yaml';
   const errors = [];
   const warnings = [];
@@ -421,6 +888,10 @@ export function validateExportDraft(ctxs, opts = {}) {
   if (opts.frontRegionMode === 'custom' && !frontReg.regions.length) {
     warnings.push('「前置地区」为自定义模式但未选国家，将回退为全部地区');
   }
+  const appResolved = resolveAppRoutes(opts.appRoutes, list, landingBundle, opts);
+  errors.push(...appResolved.errors);
+  warnings.push(...appResolved.warnings);
+
   const hasNonOwnerUser = list.some((c) => c.username && !/^(me|ss2022-|admin|owner)/i.test(String(c.username)));
   if (opts.includeOpsChannel && hasNonOwnerUser) {
     warnings.push('已勾选「运维通道」，若发给他人使用建议取消勾选以防泄露运维 IP');
@@ -436,7 +907,8 @@ export function validateExportDraft(ctxs, opts = {}) {
     resolvedExitRegions: exitFb.regions,
     resolvedExitMode: exitFb.mode,
     resolvedFrontLabel: frontReg.label,
-    customRuleCount: exitDomains.valid.length + directDomains.valid.length + rejectDomains.valid.length,
+    appRouteCount: appResolved.routes.length,
+    customRuleCount: exitDomains.valid.length + directDomains.valid.length + rejectDomains.valid.length + appResolved.totalRuleEntries,
   };
 }
 
@@ -465,7 +937,8 @@ export function buildAllPlatformYaml(ctxs, opts = {}) {
   // 全平台单文件内建策略组固定为「前置代理」，强制对齐 dialer-proxy 杜绝 "dialer-proxy not found" 报错
   const list = normalizeCtxList(ctxs).map((c) => ({ ...c, dialerProxy: '前置代理' }));
   const extraIps = opts.includeOpsChannel && opts.includeAllManagedIps ? (opts.extraManagedIps || []) : [];
-  const { proxies: landingList, managedIps } = buildLandingProxyList(list, extraIps);
+  const landingBundle = buildLandingProxyList(list, extraIps);
+  const { proxies: landingList, managedIps } = landingBundle;
   const frontUrl = String(opts.frontSubUrl || '').trim() || 'REPLACE_WITH_FRONT_AIRPORT_SUB_URL';
   const devicePreset = opts.devicePreset || 'universal';
   const includeOps = Boolean(opts.includeOpsChannel);
@@ -480,6 +953,8 @@ export function buildAllPlatformYaml(ctxs, opts = {}) {
   const exitDomains = parseCustomDomainLines(opts.customExitDomains).valid;
   const directDomains = parseCustomDomainLines(opts.customDirectDomains).valid;
   const rejectDomains = parseCustomDomainLines(opts.customRejectDomains).valid;
+  const appResolved = resolveAppRoutes(opts.appRoutes, list, landingBundle, opts);
+  const hasProcessRules = appResolved.routes.some((r) => r.processes.length > 0);
 
   const excludeParts = [];
   if (excludeHighMult) excludeParts.push(HIGH_MULT_RE2);
@@ -496,6 +971,40 @@ export function buildAllPlatformYaml(ctxs, opts = {}) {
   const generalProxiesYaml = defaultOutboundMode === 'airport'
     ? '      - "🚀 机场直出"\n      - "落地出口"\n      - "前置代理"\n      - DIRECT'
     : '      - "落地出口"\n      - "🚀 机场直出"\n      - "前置代理"\n      - DIRECT';
+
+  const appGroupsYaml = appResolved.routes
+    .filter((r) => r.targetMode === 'custom_group')
+    .map((r) => {
+      const pList = r.landingNames.length
+        ? r.landingNames
+        : (!r.fallbackRe2 ? ['落地出口'] : []);
+      const lines = [
+        `  - name: ${JSON.stringify(r.groupName)}`,
+        '    type: select',
+      ];
+      if (pList.length) {
+        lines.push('    proxies:');
+        pList.forEach((n) => lines.push(`      - ${JSON.stringify(n)}`));
+      }
+      if (r.fallbackRe2) {
+        lines.push(
+          '    use:',
+          '      - front_airport',
+          `    filter: ${JSON.stringify(r.fallbackRe2)}`,
+        );
+      }
+      return `\n${lines.join('\n')}`;
+    })
+    .join('\n');
+
+  const appRuleLines = [];
+  for (const r of appResolved.routes) {
+    r.processes.forEach((p) => appRuleLines.push(`  - PROCESS-NAME,${p},${r.groupTarget}`));
+    r.keywords.forEach((k) => appRuleLines.push(`  - DOMAIN-KEYWORD,${k},${r.groupTarget}`));
+    r.domains.forEach((d) => appRuleLines.push(`  - DOMAIN-SUFFIX,${d},${r.groupTarget}`));
+    if (r.ruleSet) appRuleLines.push(`  - RULE-SET,${r.ruleSet.key},${r.groupTarget}`);
+  }
+  const appRulesYaml = appRuleLines.length ? `${appRuleLines.join('\n')}\n` : '';
 
   const customRuleLines = [
     ...rejectDomains.map((d) => `  - DOMAIN-SUFFIX,${d},REJECT`),
@@ -547,7 +1056,7 @@ ipv6: true
 log-level: error
 unified-delay: true
 tcp-concurrent: true
-find-process-mode: off
+find-process-mode: ${hasProcessRules ? 'strict' : 'off'}
 keep-alive-interval: 30
 keep-alive-idle: 15
 geodata-mode: false
@@ -609,7 +1118,7 @@ proxy-groups:
     type: select
     proxies:
 ${exitNamesYaml}${exitUseYaml}
-${opsGroupYaml}
+${opsGroupYaml}${appGroupsYaml ? `${appGroupsYaml}\n` : ''}
   - name: "🤖 AI 服务"
     type: select
     proxies:
@@ -670,6 +1179,7 @@ ${[
     rp('proxy_domain', 'geosite/geolocation-!cn.mrs', 'domain'),
     rp('cn_domain', 'geosite/cn.mrs', 'domain'),
     rp('cn_ip', 'geoip/cn.mrs', 'ipcidr'),
+    ...appResolved.ruleProviders.map((p) => rp(p.key, p.path, 'domain')),
   ].join('\n')}
 
 rules:
@@ -692,7 +1202,7 @@ ${customRulesYaml}  - DOMAIN-SUFFIX,locationhistory-pa.googleapis.com,REJECT
   - DOMAIN-SUFFIX,stun.nextcloud.com,落地出口
   - DOMAIN-SUFFIX,stun.sipgate.net,落地出口
   - "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,private_domain),(RULE-SET,private_ip,no-resolve),(RULE-SET,cn_domain),(RULE-SET,cn_ip,no-resolve),(RULE-SET,apple_domain),(RULE-SET,microsoft_domain)))))),REJECT"
-  - DOMAIN-SUFFIX,ipinfo.io,落地出口
+${appRulesYaml}  - DOMAIN-SUFFIX,ipinfo.io,落地出口
   - DOMAIN-SUFFIX,ippure.com,落地出口
   - DOMAIN-SUFFIX,ipure.dev,落地出口
   - DOMAIN-SUFFIX,scamalytics.com,落地出口
@@ -818,11 +1328,12 @@ ${fakeIpList.map((d) => `    - ${JSON.stringify(d)}`).join('\n')}
 `;
 }
 
-/** 2. 生成 Bettbox / Clash Verge Rev 万能通用覆写脚本 v4.4 (.js)（支持多落地组合 + DIY 地区与规则） */
+/** 2. 生成 Bettbox / Clash Verge Rev 万能通用覆写脚本 v4.5 (.js)（支持多落地组合 + APP 专属分流 + 防风控护栏） */
 export function buildBettboxUniversalJs(ctxs, opts = {}) {
   const list = normalizeCtxList(ctxs);
   const extraIps = opts.includeOpsChannel && opts.includeAllManagedIps ? (opts.extraManagedIps || []) : [];
-  const { proxies: landingList, managedIps } = buildLandingProxyList(list, extraIps);
+  const landingBundle = buildLandingProxyList(list, extraIps);
+  const { proxies: landingList, managedIps } = landingBundle;
   const devicePreset = opts.devicePreset || 'universal';
   const includeOps = Boolean(opts.includeOpsChannel);
   const excludeHighMult = opts.excludeHighMult !== false;
@@ -836,6 +1347,20 @@ export function buildBettboxUniversalJs(ctxs, opts = {}) {
   const exitDomains = parseCustomDomainLines(opts.customExitDomains).valid;
   const directDomains = parseCustomDomainLines(opts.customDirectDomains).valid;
   const rejectDomains = parseCustomDomainLines(opts.customRejectDomains).valid;
+  const appResolved = resolveAppRoutes(opts.appRoutes, list, landingBundle, opts);
+  const appRoutesPayload = appResolved.routes.map((r) => ({
+    groupName: r.groupName,
+    targetMode: r.targetMode,
+    groupTarget: r.groupTarget,
+    landingNames: r.landingNames,
+    fallbackPattern: r.fallbackRawPattern,
+    fallbackIncludesUS: r.fallbackIncludesUS,
+    ruleSetKey: r.ruleSet ? r.ruleSet.key : '',
+    ruleSetPath: r.ruleSet ? r.ruleSet.path : '',
+    domains: r.domains,
+    keywords: r.keywords,
+    processes: r.processes,
+  }));
 
   const presetLabel = devicePreset === 'harmony'
     ? '鸿蒙 4/7 + Windows 专优'
@@ -854,8 +1379,8 @@ export function buildBettboxUniversalJs(ctxs, opts = {}) {
   return `// ============================================================================
 // NodeDeck 万能通用覆写脚本（Bettbox / Clash Verge Rev / FlClash）
 // 包含落地：${summaryNames}
-// 预设：${presetLabel} ｜ 落地备选：${exitFb.regions.length ? exitFb.regions.join('+') : '仅自建落地'} ｜ 前置优选：${frontReg.label}
-// 版本：v4.4-DIY（纯本地离线生成 · 精准倍率识别 · 防崩防污染 · 7大体检站锁落地）
+// 预设：${presetLabel} ｜ 落地备选：${exitFb.regions.length ? exitFb.regions.join('+') : '仅自建落地'} ｜ 前置优选：${frontReg.label}${appRoutesPayload.length ? ` ｜ 专属 APP 分流：${appRoutesPayload.length} 组` : ''}
+// 版本：v4.5-DIY（纯本地离线生成 · APP 防风控分流 · 精准倍率识别 · 防崩防污染）
 // ============================================================================
 
 const MEMBER_CONFIG = {
@@ -872,6 +1397,7 @@ const MEMBER_CONFIG = {
   customRejectDomains: ${JSON.stringify(rejectDomains)},
   customDirectDomains: ${JSON.stringify(directDomains)},
   customExitDomains: ${JSON.stringify(exitDomains)},
+  appRoutes: ${JSON.stringify(appRoutesPayload, null, 2)},
   // 备用镜像: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo"
   mrsMirror: "${MRS_MIRROR}",
   fakeIpFilter: ${JSON.stringify(fakeIpList, null, 4)},
@@ -891,10 +1417,12 @@ function main(config) {
   const DEV_GROUP = "💻 GitHub & 开发";
   const FALLBACK_GROUP = "🐟 漏网之鱼";
 
+  const customAppRouteList = Array.isArray(MEMBER_CONFIG.appRoutes) ? MEMBER_CONFIG.appRoutes : [];
   const RESERVED_NAMES = new Set([
     FRONT_GROUP, FRONT_SPEED, FRONT_STABLE, EXIT_GROUP, OPS_GROUP,
     AIRPORT_GROUP, AI_GROUP, GOOGLE_GROUP, MEDIA_GROUP,
     SOCIAL_GROUP, DEV_GROUP, FALLBACK_GROUP,
+    ...customAppRouteList.filter((r) => r && r.targetMode === "custom_group" && r.groupName).map((r) => r.groupName),
     "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL",
   ]);
 
@@ -1059,12 +1587,68 @@ function main(config) {
     : {};
 
   const probeUrl = MEMBER_CONFIG.testUrl || "https://www.gstatic.com/generate_204";
+  const landingNameSet = new Set(landingNames);
+  const customAppGroups = [];
+  const customAppRules = [];
+  let hasAppProcessRule = false;
+  for (const r of customAppRouteList) {
+    if (!r || !r.groupTarget) continue;
+    if (r.targetMode === "custom_group" && r.groupName) {
+      const boundLandings = (Array.isArray(r.landingNames) ? r.landingNames : []).filter((n) => landingNameSet.has(n));
+      let regMatched = [];
+      if (r.fallbackPattern) {
+        let regRe = null;
+        try { regRe = new RegExp(r.fallbackPattern, "i"); } catch (_) { regRe = null; }
+        const matchReg = (name) => {
+          const text = String(name || "");
+          if (regRe && regRe.test(text)) return true;
+          if (r.fallbackIncludesUS) return /America/i.test(text) && !/South\\s*America|Latin\\s*America/i.test(text);
+          return false;
+        };
+        regMatched = unique([
+          ...normalNodes.filter((p) => matchReg(p.name)).map((p) => p.name),
+          ...highMultNodes.filter((p) => matchReg(p.name)).map((p) => p.name),
+        ]);
+      }
+      const groupProxies = unique([...boundLandings, ...regMatched]);
+      const grp = { name: r.groupName, type: "select" };
+      if (groupProxies.length > 0) {
+        grp.proxies = groupProxies;
+      }
+      if (hasProxyProviders && regMatched.length === 0 && r.fallbackPattern) {
+        grp.use = providerKeys;
+        grp.filter = "(?i)" + r.fallbackPattern;
+      }
+      if (!grp.proxies && !grp.use) {
+        grp.proxies = [EXIT_GROUP];
+      }
+      customAppGroups.push(grp);
+    }
+    for (const proc of (Array.isArray(r.processes) ? r.processes : [])) {
+      hasAppProcessRule = true;
+      customAppRules.push("PROCESS-NAME," + proc + "," + r.groupTarget);
+    }
+    for (const kw of (Array.isArray(r.keywords) ? r.keywords : [])) {
+      customAppRules.push("DOMAIN-KEYWORD," + kw + "," + r.groupTarget);
+    }
+    for (const dom of (Array.isArray(r.domains) ? r.domains : [])) {
+      customAppRules.push("DOMAIN-SUFFIX," + dom + "," + r.groupTarget);
+    }
+    if (r.ruleSetKey && r.ruleSetPath) {
+      customAppRules.push("RULE-SET," + r.ruleSetKey + "," + r.groupTarget);
+    }
+  }
+  if (hasAppProcessRule) {
+    config["find-process-mode"] = "strict";
+  }
+
   config["proxy-groups"] = [
     { name: FRONT_GROUP, type: "select", proxies: unique([FRONT_SPEED, FRONT_STABLE, ...frontManualList]), ...providerManualAttach },
     { name: FRONT_SPEED, type: "url-test", url: probeUrl, interval: 300, tolerance: 80, lazy: true, ...autoPoolSource },
     { name: FRONT_STABLE, type: "fallback", url: probeUrl, interval: 300, lazy: true, ...autoPoolSource },
     { name: EXIT_GROUP, type: "select", proxies: exitList.length > 0 ? exitList : [FRONT_GROUP] },
-${opsGroupSnippet}    { name: AI_GROUP, type: "select", proxies: unique([EXIT_GROUP, AIRPORT_GROUP, FRONT_GROUP]) },
+${opsGroupSnippet}    ...customAppGroups,
+    { name: AI_GROUP, type: "select", proxies: unique([EXIT_GROUP, AIRPORT_GROUP, FRONT_GROUP]) },
     { name: GOOGLE_GROUP, type: "select", proxies: unique([EXIT_GROUP, AIRPORT_GROUP, FRONT_GROUP]) },
     { name: MEDIA_GROUP, type: "select", proxies: unique(defaultGeneral) },
     { name: SOCIAL_GROUP, type: "select", proxies: unique(defaultGeneral) },
@@ -1096,6 +1680,11 @@ ${opsGroupSnippet}    { name: AI_GROUP, type: "select", proxies: unique([EXIT_GR
     cn_ip: mrs("cn_ip", "geoip/cn.mrs", "ipcidr"),
     proxy_domain: mrs("proxy_domain", "geosite/geolocation-!cn.mrs", "domain"),
   };
+  for (const r of customAppRouteList) {
+    if (r && r.ruleSetKey && r.ruleSetPath && !config["rule-providers"][r.ruleSetKey]) {
+      config["rule-providers"][r.ruleSetKey] = mrs(r.ruleSetKey, r.ruleSetPath, "domain");
+    }
+  }
 
   config.rules = [
 ${opsRuleLine}
@@ -1121,6 +1710,7 @@ ${opsRuleLine}
     "DOMAIN-SUFFIX,stun.nextcloud.com," + EXIT_GROUP,
     "DOMAIN-SUFFIX,stun.sipgate.net," + EXIT_GROUP,
     "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,private_domain),(RULE-SET,private_ip,no-resolve),(RULE-SET,cn_domain),(RULE-SET,cn_ip,no-resolve),(RULE-SET,apple_domain),(RULE-SET,microsoft_domain)))))),REJECT",
+    ...customAppRules,
     "DOMAIN-SUFFIX,ipinfo.io," + EXIT_GROUP,
     "DOMAIN-SUFFIX,ippure.com," + EXIT_GROUP,
     "DOMAIN-SUFFIX,ipure.dev," + EXIT_GROUP,

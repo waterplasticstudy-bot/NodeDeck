@@ -331,6 +331,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
   }));
 
   $('accDeleteBtn').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
     if (!editingAccountId) return;
     const ok = await confirmDialog({
       title: '删除此账号卡片',
@@ -339,7 +340,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
       danger: true,
     });
     if (!ok) return;
-    await withButtonLoading(ev.currentTarget, async () => {
+    await withButtonLoading(btn, async () => {
       try {
         const list = (appState.localConfig?.providerAccounts || []).filter((a) => a.id !== editingAccountId);
         const res = await invokeCmd('save_provider_accounts', { accounts: list });
@@ -354,6 +355,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
   });
 
   $('accClearSessionBtn').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
     const profileId = $('accProfileId').value.trim();
     const ok = await confirmDialog({
       title: `清除沙箱「${profileId}」登录态`,
@@ -362,7 +364,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
       danger: true,
     });
     if (!ok) return;
-    await withButtonLoading(ev.currentTarget, async () => {
+    await withButtonLoading(btn, async () => {
       try {
         await invokeCmd('clear_account_session', { profileId });
         showToast(`已清空沙箱「${profileId}」登录态`);
@@ -418,6 +420,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
   }));
 
   $('natDeleteBtn').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
     if (!editingNatId) return;
     const ok = await confirmDialog({
       title: '删除此 NAT 节点',
@@ -426,7 +429,7 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
       danger: true,
     });
     if (!ok) return;
-    await withButtonLoading(ev.currentTarget, async () => {
+    await withButtonLoading(btn, async () => {
       try {
         const list = (appState.localConfig?.natNodes || []).filter((n) => n.id !== editingNatId);
         const res = await invokeCmd('save_nat_nodes', { nodes: list });
@@ -440,6 +443,67 @@ export function initAssetsEvents(appState, { onNodesChanged, switchToNode }) {
       }
     });
   });
+
+  $('syncAllAssetsTrafficBtn')?.addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
+    const nats = appState.localConfig?.natNodes || [];
+    const accounts = appState.localConfig?.providerAccounts || [];
+    const sessions = appState.accountSessions || {};
+    let okCount = 0;
+    let skipCount = 0;
+
+    showToast('正在静默批量同步全部 NAT 与已登录账号流量...');
+
+    for (const nat of nats) {
+      try {
+        let done = false;
+        if (nat.sshPort > 0 && nat.publicIp) {
+          const exitStatus = await invokeCmd('get_nat_exit_status', { nodeId: nat.id });
+          if (exitStatus.kind === 'global' && exitStatus.totalBytes > 0) {
+            const cfgRes = await invokeCmd('get_config');
+            if (cfgRes.config) appState.localConfig = cfgRes.config;
+            okCount += 1;
+            done = true;
+          }
+        }
+        if (!done && nat.portalUrl && sessions[nat.providerProfileId || 'nat_main']) {
+          const res = await invokeCmd('sync_dashboard_traffic', { targetKind: 'nat', targetId: nat.id, silentOnly: true });
+          if (!res.needsWindowReady) {
+            if (res.config) appState.localConfig = res.config;
+            okCount += 1;
+            done = true;
+          }
+        }
+        if (!done) skipCount += 1;
+      } catch {
+        skipCount += 1;
+      }
+    }
+
+    for (const acc of accounts) {
+      try {
+        if (acc.subscriptionUrl && acc.subscriptionUrl.trim()) {
+          const res = await invokeCmd('sync_subscription_traffic', { accountId: acc.id });
+          if (res.config) appState.localConfig = res.config;
+          okCount += 1;
+        } else if (acc.portalUrl && sessions[acc.profileId]) {
+          const res = await invokeCmd('sync_dashboard_traffic', { targetKind: 'account', targetId: acc.id, silentOnly: true });
+          if (!res.needsWindowReady) {
+            if (res.config) appState.localConfig = res.config;
+            okCount += 1;
+          } else {
+            skipCount += 1;
+          }
+        } else {
+          skipCount += 1;
+        }
+      } catch {
+        skipCount += 1;
+      }
+    }
+
+    renderAssetsPage(appState);
+    showToast(`批量同步完成：成功 ${okCount} 项${skipCount > 0 ? `，未登录/跳过 ${skipCount} 项` : ''}`);
+  }));
 
   $('pingAllNatBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
     const nats = (appState.localConfig?.natNodes || []).filter((n) => n.publicIp && n.servicePort);

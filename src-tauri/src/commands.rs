@@ -5,14 +5,15 @@ use crate::accounts::{
     open_isolated_window, scrape_window_traffic, tcp_ping, ScrapeOutcome,
 };
 use crate::alpine::{
-    close_alpine_conn, configure_alpine_audit, fetch_alpine_audit, fetch_alpine_config,
-    fetch_alpine_config_fast, fetch_alpine_logs, fetch_alpine_overview, fetch_nat_exit_latency,
-    fetch_nat_exit_status, mutate_alpine_inbound, restore_alpine_backup, run_alpine_service_action,
-    run_nat_exit_diagnostics, switch_nat_exit, InboundMutateInput,
+    close_alpine_conn, configure_alpine_audit, fetch_alpine_audit, fetch_alpine_clash_info,
+    fetch_alpine_config, fetch_alpine_config_fast, fetch_alpine_logs, fetch_alpine_overview,
+    fetch_nat_exit_latency, fetch_nat_exit_status, manage_alpine_ledger, mutate_alpine_inbound,
+    restore_alpine_backup, run_alpine_service_action, run_nat_exit_diagnostics, switch_nat_exit,
+    InboundMutateInput,
 };
 use crate::config::{
     build_vless_link, load_config, resolve_key_path, resolve_panel_dir, update_config, AppConfig,
-    ExportPresetConfig, NatNodeConfig, ProviderAccountConfig,
+    ExportPresetConfig, NatNodeConfig, ProviderAccountConfig, TerminalSnippet,
 };
 use crate::constants::{
     DEFAULT_MIHOMO_MIXED_PORT, DEFAULT_SNI, INBOUND_TAG_PATTERN, MAIN_WINDOW_LABEL,
@@ -20,6 +21,8 @@ use crate::constants::{
 };
 use crate::mihomo::MihomoClient;
 use crate::ssh_client::{launch_ssh_key_wizard, PersistentSshClient, SshError};
+use crate::terminal::{PtyTarget, TerminalManager};
+use crate::tunnel::{panel_window_label, TunnelManager, TunnelTarget};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -43,6 +46,8 @@ pub struct NetSample {
 pub struct AppState {
     pub ssh: PersistentSshClient,
     pub mihomo: MihomoClient,
+    pub tunnels: TunnelManager,
+    pub terminal: TerminalManager,
     pub prev_net: Mutex<Option<NetSample>>,
 }
 
@@ -51,6 +56,8 @@ impl AppState {
         Self {
             ssh: PersistentSshClient::new(),
             mihomo: MihomoClient::new(),
+            tunnels: TunnelManager::new(),
+            terminal: TerminalManager::new(),
             prev_net: Mutex::new(None),
         }
     }
@@ -175,6 +182,83 @@ pub fn save_export_presets(presets: Vec<ExportPresetConfig>) -> Result<Value, Ss
     let saved = update_config(|cfg| cfg.export_presets = presets)
         .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
     Ok(json!({ "ok": true, "exportPresets": saved.export_presets }))
+}
+
+#[tauri::command]
+pub fn save_terminal_snippets(snippets: Vec<TerminalSnippet>) -> Result<Value, SshError> {
+    let saved = update_config(|cfg| cfg.terminal_snippets = snippets)
+        .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    Ok(json!({ "ok": true, "terminalSnippets": saved.terminal_snippets }))
+}
+
+#[tauri::command]
+pub fn pty_open(
+    node_id: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    let cfg = load_config();
+    let target = if node_id == "vps_main" {
+        PtyTarget {
+            node_id: "vps_main".to_string(),
+            node_name: if cfg.name.trim().is_empty() {
+                "主 VPS".to_string()
+            } else {
+                cfg.name.clone()
+            },
+            host: cfg.host.clone(),
+            port: cfg.ssh_port,
+            user: cfg.user.clone(),
+            key_path: cfg.key_path.clone(),
+        }
+    } else {
+        let node = find_nat_node(&cfg, &node_id)?;
+        let key_path = if node.ssh_key_path.trim().is_empty() {
+            cfg.key_path.clone()
+        } else {
+            node.ssh_key_path.clone()
+        };
+        PtyTarget {
+            node_id: node.id.clone(),
+            node_name: node.name.clone(),
+            host: node.public_ip.clone(),
+            port: node.ssh_port,
+            user: node.ssh_user.clone(),
+            key_path,
+        }
+    };
+    state
+        .terminal
+        .open_session(&app, target, cols.unwrap_or(110), rows.unwrap_or(30))
+}
+
+#[tauri::command]
+pub fn pty_write(
+    session_id: String,
+    data: String,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    state.terminal.write(&session_id, &data)?;
+    Ok(json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub fn pty_resize(
+    session_id: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    state.terminal.resize(&session_id, cols, rows)?;
+    Ok(json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub fn pty_close(session_id: String, state: State<'_, AppState>) -> Result<Value, SshError> {
+    state.terminal.close(&session_id);
+    Ok(json!({ "ok": true }))
 }
 
 #[tauri::command]
@@ -727,6 +811,186 @@ pub async fn close_nat_alpine_conn(node_id: String, id: String) -> Result<Value,
     close_alpine_conn(&node, &cfg.key_path, &id).await
 }
 
+// ---------- 持久化成员流量账本、本地配额与零暴露远端 sing-box 面板隧道 ----------
+
+#[tauri::command]
+pub async fn manage_node_ledger(
+    node_id: String,
+    action: String,
+    username: Option<String>,
+    scope: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    if node_id == "vps_main" {
+        let (res, _) = state
+            .ssh
+            .call(
+                "ledger_manage",
+                json!({
+                    "action": action,
+                    "username": username,
+                    "scope": scope
+                }),
+                SSH_MUTATE_CALL_TIMEOUT_MS,
+            )
+            .await?;
+        return Ok(res);
+    }
+    let cfg = load_config();
+    let node = find_nat_node(&cfg, &node_id)?;
+    manage_alpine_ledger(&node, &cfg.key_path, &action, username.as_deref(), scope.as_deref()).await
+}
+
+#[tauri::command]
+pub fn save_member_quota(
+    node_id: String,
+    username: String,
+    quota_gb: f64,
+) -> Result<Value, SshError> {
+    let nid = node_id.trim();
+    let uname = username.trim();
+    if nid.is_empty() || uname.is_empty() {
+        return Err(bad_request("缺少节点或成员标识"));
+    }
+    if !quota_gb.is_finite() || quota_gb < 0.0 || quota_gb > 1_000_000.0 {
+        return Err(bad_request("配额数值无效"));
+    }
+    let key = format!("{nid}::{uname}");
+    let saved = update_config(|cfg| {
+        if quota_gb <= 0.0 {
+            cfg.member_quotas_gb.remove(&key);
+        } else {
+            cfg.member_quotas_gb
+                .insert(key, (quota_gb * 100.0).round() / 100.0);
+        }
+    })
+    .map_err(|e| SshError::new("CONFIG_SAVE_ERR", e, None))?;
+    Ok(json!({
+        "ok": true,
+        "memberQuotasGb": saved.member_quotas_gb
+    }))
+}
+
+#[tauri::command]
+pub async fn open_remote_singbox_panel(
+    node_id: String,
+    theme: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    let cfg = load_config();
+    let target = if node_id == "vps_main" {
+        let (info, _) = state
+            .ssh
+            .call("clash_info", json!({}), SSH_DEFAULT_CALL_TIMEOUT_MS)
+            .await?;
+        let ctrl = info
+            .get("controller")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let secret = info
+            .get("secret")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if ctrl.is_empty() {
+            return Err(SshError::new(
+                "CLASH_API_OFF",
+                "主 VPS 尚未开启 127.0.0.1 本地统计接口，请先在「成员流量与在线监控」中点击一键开启",
+                None,
+            ));
+        }
+        TunnelTarget {
+            node_id: "vps_main".to_string(),
+            node_name: if cfg.name.trim().is_empty() {
+                "主 VPS".to_string()
+            } else {
+                cfg.name.clone()
+            },
+            ssh_host: cfg.host.clone(),
+            ssh_port: cfg.ssh_port,
+            ssh_user: cfg.user.clone(),
+            ssh_key_path: cfg.key_path.clone(),
+            remote_controller: ctrl,
+            secret,
+        }
+    } else {
+        let node = find_nat_node(&cfg, &node_id)?;
+        let (ctrl, secret) = fetch_alpine_clash_info(&node, &cfg.key_path).await?;
+        if ctrl.is_empty() {
+            return Err(SshError::new(
+                "CLASH_API_OFF",
+                format!(
+                    "「{}」尚未开启 127.0.0.1 本地统计接口，请先在「成员流量与在线监控」中点击一键开启",
+                    node.name
+                ),
+                None,
+            ));
+        }
+        let key_path = if node.ssh_key_path.trim().is_empty() {
+            cfg.key_path.clone()
+        } else {
+            node.ssh_key_path.clone()
+        };
+        TunnelTarget {
+            node_id: node.id.clone(),
+            node_name: node.name.clone(),
+            ssh_host: node.public_ip.clone(),
+            ssh_port: node.ssh_port,
+            ssh_user: node.ssh_user.clone(),
+            ssh_key_path: key_path,
+            remote_controller: ctrl,
+            secret,
+        }
+    };
+
+    state
+        .tunnels
+        .open_panel(&app, target, theme.as_deref().unwrap_or("light"))
+        .await
+}
+
+#[tauri::command]
+pub async fn poll_remote_singbox_panel(
+    node_id: String,
+    include_rules: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    state
+        .tunnels
+        .poll_panel(&node_id, include_rules.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub async fn close_remote_singbox_panel(
+    node_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    state.tunnels.close_node(&node_id).await;
+    let label = panel_window_label(&node_id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.close();
+    }
+    Ok(json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn close_remote_singbox_panel_conn(
+    node_id: String,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Value, SshError> {
+    if id.trim().is_empty() {
+        return Err(bad_request("缺少连接 ID"));
+    }
+    state.tunnels.close_panel_conn(&node_id, &id).await
+}
+
 #[tauri::command]
 pub async fn get_nat_exit_status(node_id: String) -> Result<Value, SshError> {
     let cfg = load_config();
@@ -801,6 +1065,7 @@ pub fn get_account_sessions_status(profile_ids: Vec<String>, app: AppHandle) -> 
 pub async fn sync_dashboard_traffic(
     target_kind: String,
     target_id: String,
+    silent_only: Option<bool>,
     app: AppHandle,
 ) -> Result<Value, SshError> {
     let cfg = load_config();
@@ -828,7 +1093,7 @@ pub async fn sync_dashboard_traffic(
         _ => return Err(bad_request("无效的识别目标类型")),
     };
 
-    match scrape_window_traffic(&app, &profile_id, &title, &url).await? {
+    match scrape_window_traffic(&app, &profile_id, &title, &url, silent_only.unwrap_or(false)).await? {
         ScrapeOutcome::NeedsWindowReady(msg) => Ok(json!({
             "ok": true,
             "needsWindowReady": true,

@@ -9,7 +9,7 @@ Manage your **local Mihomo / Clash API (Zashboard-style DIY)**, **Linux VPS & Al
 
 [简体中文](./README.md) · [English](./README_EN.md) · [🔐 Source SHA-256 Checksums](./SHA256SUMS-source.txt)
 
-![Version](https://img.shields.io/badge/Version-v1.2.1-007aff)
+![Version](https://img.shields.io/badge/Version-v1.4.0-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
 ![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6?logo=apple)
@@ -70,22 +70,26 @@ You do **not** need a complex multi-server setup to get started — use only the
 
 ---
 
-## 🚀 Key Highlights (v1.2.1)
+## 🚀 Key Highlights (v1.4.0)
 
-1. **Zashboard-Style Local Mihomo / Clash DIY Controller**
+1. **Built-In Interactive SSH Terminal + Quick Commands + Zero-Exposure Remote `sing-box` Panel**
+   - Cross-platform native PTY SSH workbench (Windows ConPTY / macOS PTY + offline `xterm.js`) with multi-tabs, one-click `sb` script launch, font scaling, smart copy/paste, immersive fullscreen, and a collapsible local **Quick Commands** drawer persisted to `config.json`.
+   - Zero-public-port remote `sing-box` live monitor via encrypted SSH `-L` loopback tunnel with automatic teardown on window close or app exit, plus silent SSH auto-reconnect across network/proxy switches.
+2. **Zashboard-Style Local Mihomo / Clash DIY Controller**
    - Sort nodes by latency / name / default, hide unavailable/timed-out nodes, switch card density (compact / standard / wide), configure custom test URL & timeout, right-click any node to quick-test delay, or batch-test full groups (RFC 3986 `%20` path-safe for spaces & emojis).
    - **Live Rules & Rule-Providers Inspector (Read-Only)**: Search loaded rules by domain, type, or policy target and inspect `.mrs` rule-set counts.
-   - **Interactive Connections Table**: Customizable visible columns, pause refresh toggle, traffic/host/process sorting, and right-click cell copy.
-2. **Flexible Offline Multi-Node Config Exporter + 4 Guardrails**
-   - Combine any VPS/NAT nodes into a self-contained **all-platform `.yaml`** (Win10/11, iOS Clash Mi / Stash, HarmonyOS 4/7) or **Bettbox / Clash Verge v4.4 `.js`** override.
+   - **Interactive Connections Table**: Customizable visible columns, pause refresh toggle, traffic/host/process sorting, and right-click context menu to copy, kill, or add any domain directly into custom APP routing.
+3. **Flexible Offline Multi-Node Config Exporter + App-Level Anti-Risk Routing**
+   - Combine any VPS/NAT nodes into a self-contained **all-platform `.yaml`** (Win10/11, iOS Clash Mi / Stash, HarmonyOS 4/7) or **Bettbox / Clash Verge v4.5 `.js`** override.
+   - **Per-APP Custom Strategy Groups & Geo-Block Guardrails**: 18 built-in presets (Bybit, Binance, OKX, Google Pay, ChatGPT, Claude, Gemini, Grok, YouTube, Telegram, X, Instagram, Gmail, TikTok, Pixiv, EhViewer, JMComic, Steam) plus unlimited custom apps; bind each app to exact self-hosted landing nodes or safe country pools with live geo-restriction warnings (e.g., blocking US/HK/SG for exchanges).
    - Customizable exit fallback countries (Auto / 10-region chips / Self-hosted only), front transit region selection, accurate `>1x` multiplier filtering (keeps `0.1x–1x`), traffic-saving vs landing-first outbound mode, optional visual custom domain rules box (Exit / Direct / Reject), local preset profiles, Go RE2 syntax guard, and non-empty fallback safety nets.
-3. **Hybrid VPS + Alpine NAT Fleet Management & Offline QR Codes**
+4. **Hybrid VPS + Alpine NAT Fleet Management (incl. SS-2022 Multi-User EIH) & Offline QR Codes**
    - Zero-Python Alpine POSIX agent with single-SSH bundled queries (50% fewer SSH round-trips), 128 MB RAM friendly.
-   - Unified `sing-box` CRUD for **VLESS + Reality**, **Shadowsocks-2022**, **SOCKS5**, **HTTP**, and **Mixed** with rolling backups, `sing-box check`, and automatic rollback.
+   - Unified `sing-box` CRUD for **VLESS + Reality**, **Shadowsocks-2022 (full single-port multi-user EIH support)**, **SOCKS5**, **HTTP**, and **Mixed** with rolling backups, `sing-box check`, and automatic rollback.
    - Zero-dependency offline ISO/IEC 18004 QR generator (V1–V16, UTF-8 safe).
-4. **Loopback-Only Audit, Multi-Account Sandboxes & Appearance DIY**
-   - `127.0.0.1` Clash API monitoring per node with multi-`/24` subnet alerts, zero public ports exposed.
-   - 6 adaptive accent themes, comfortable/compact density toggle, optional widget hiding, `Ctrl+K` Command Palette, semantic log highlighting & export.
+5. **Persistent Per-Member Traffic Ledgers, Silent 1-Click Sync & Fullscreen Adaptive UI**
+   - Optional server-side persistent per-member traffic ledger (`systemd` on VPS / ultra-light ~0.6 MB OpenRC daemon on Alpine NAT) tracking daily/monthly/total bytes across restarts, paired with local soft monthly quotas (80% warn / 100% alert, never disconnects users).
+   - Isolated WebView2/WKWebView sandboxes with silent 1-click background dashboard traffic sync, batch "Sync All Traffic", fluid 1080p/2K/4K responsive layout (`ResizeObserver`), top 1-click node switcher pills, 6 adaptive accent themes, and `Ctrl+K` Command Palette.
 
 ---
 
@@ -109,7 +113,7 @@ Prerequisites: [Rust Stable](https://rustup.rs/), Node.js 22+, native OpenSSH (p
 git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
 cd NodeDeck
 
-# Full 19-point static, sandbox, QR, scraper & privacy gate
+# Full 22-point static, sandbox, QR, scraper & privacy gate
 node scripts/verify-all.mjs
 
 # Unit tests, strict clippy & release build

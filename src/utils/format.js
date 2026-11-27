@@ -82,6 +82,33 @@ export function annotateHost(host, port) {
   return hit ? { label: hit.label, cls: hit.cls } : null;
 }
 
+const MULTI_PART_TLDS = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'co.jp', 'ne.jp', 'or.jp', 'go.jp',
+  'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'com.hk', 'org.hk', 'com.tw', 'org.tw',
+  'com.sg', 'com.au', 'net.au', 'org.au', 'co.kr', 'or.kr', 'com.br', 'com.mx',
+]);
+
+/** 提取可用于 DOMAIN-SUFFIX 的干净根域名（IP / 无效地址返回空字符串） */
+export function extractRootDomain(rawHost) {
+  const cleaned = String(rawHost || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+    .replace(/:\d+$/, '')
+    .replace(/^\.+|\.+$/g, '');
+  if (!cleaned || !cleaned.includes('.')) return '';
+  if (/^[\d.]+$/.test(cleaned) || cleaned.includes(':')) return '';
+  if (!/^[a-z0-9.-]+$/.test(cleaned)) return '';
+  const parts = cleaned.split('.').filter(Boolean);
+  if (parts.length <= 2) return cleaned;
+  const last2 = parts.slice(-2).join('.');
+  if (MULTI_PART_TLDS.has(last2) && parts.length >= 3) {
+    return parts.slice(-3).join('.');
+  }
+  return last2;
+}
+
 export function describeSingboxRule(rule) {
   if (rule.action === 'sniff') {
     return { title: '协议流量嗅探 (sniff)', desc: '自动识别 HTTPS/QUIC 域名供后续规则匹配', tone: 'blue' };

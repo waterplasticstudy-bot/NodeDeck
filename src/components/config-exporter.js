@@ -5,8 +5,10 @@
 import { DEFAULT_DIALER_PROXY } from '../constants/ui-constants.js';
 import { copyToClipboard, invokeCmd, withButtonLoading } from '../utils/bridge.js';
 import {
+  APP_ROUTE_CATALOG,
   buildAllPlatformYaml,
   buildBettboxUniversalJs,
+  createAppRouteFromPreset,
   DEFAULT_TEST_URL,
   EXPORT_REGIONS,
   inferRegionsFromCtxs,
@@ -25,6 +27,8 @@ let exportCandidates = [];
 let exportSelectedKeys = new Set();
 let selectedExitRegions = new Set();
 let selectedFrontRegions = new Set(DEFAULT_APAC_REGIONS);
+let exportAppRoutes = [];
+const expandedAppRouteIds = new Set();
 let exportFilenameEdited = false;
 let lastExportSavedPath = '';
 
@@ -46,6 +50,150 @@ function renderRegionChips(boxId, activeSet) {
   box.innerHTML = EXPORT_REGIONS.map((r) => {
     const active = activeSet.has(r.code) ? ' active' : '';
     return `<button type="button" class="region-chip${active}" data-region-code="${esc(r.code)}">${r.flag} ${esc(r.label)}</button>`;
+  }).join('');
+}
+
+function splitToCleanList(raw) {
+  return String(raw || '')
+    .split(/[\r\n,;，；]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function calcAppRouteRiskHits(route, selectedLandings) {
+  const blocked = new Set(route.blockedRegions || []);
+  if (!blocked.size) return [];
+  const effective = new Set();
+  if (route.targetMode === 'custom_group') {
+    const boundKeys = new Set(route.landingKeys || []);
+    for (const c of selectedLandings) {
+      if (boundKeys.has(c.key)) {
+        inferRegionsFromCtxs([c]).forEach((r) => effective.add(r));
+      }
+    }
+    (route.fallbackRegions || []).forEach((r) => effective.add(r));
+    if (!boundKeys.size && !(route.fallbackRegions || []).length) {
+      inferRegionsFromCtxs(selectedLandings).forEach((r) => effective.add(r));
+    }
+  } else if (route.targetMode === 'exit') {
+    inferRegionsFromCtxs(selectedLandings).forEach((r) => effective.add(r));
+  } else if (route.targetMode === 'airport') {
+    const frontMode = $('exportFrontRegionMode')?.value || 'apac';
+    const regs = frontMode === 'all'
+      ? EXPORT_REGIONS.map((r) => r.code)
+      : frontMode === 'custom'
+        ? [...selectedFrontRegions]
+        : DEFAULT_APAC_REGIONS;
+    regs.forEach((r) => effective.add(r));
+  }
+  return (route.blockedRegions || []).filter((r) => effective.has(r));
+}
+
+function renderAppCatalogBar() {
+  const box = $('exportAppCatalogBar');
+  if (!box) return;
+  const activePresets = new Set(exportAppRoutes.map((r) => r.presetId).filter(Boolean));
+  box.innerHTML = APP_ROUTE_CATALOG.map((item) => {
+    const active = activePresets.has(item.id) ? ' active' : '';
+    const title = item.note || item.name;
+    return `<button type="button" class="region-chip${active}" data-app-preset="${esc(item.id)}" title="${esc(title)}">${esc(item.icon)} ${esc(item.name)}</button>`;
+  }).join('');
+}
+
+function renderAppRoutesList() {
+  const listEl = $('exportAppRoutesList');
+  const countEl = $('exportAppRoutesCount');
+  if (countEl) countEl.textContent = `${exportAppRoutes.length} 项`;
+  if (!listEl) return;
+
+  if (!exportAppRoutes.length) {
+    listEl.innerHTML = '<div class="sub-note" style="padding:4px 2px;">暂未添加专属 APP 分流。例如：点击上方 <strong>🟡 Bybit</strong> 或 <strong>🟡 币安 Binance</strong>，可将其锁定到日本/韩国 NAT 或台湾/日韩节点，绝不误走美国节点触发风控。</div>';
+    return;
+  }
+
+  const selectedLandings = getSelectedExportItems();
+  listEl.innerHTML = exportAppRoutes.map((route) => {
+    const riskHits = calcAppRouteRiskHits(route, selectedLandings);
+    const hasBlockedSpec = (route.blockedRegions || []).length > 0;
+    const blockedSet = new Set(route.blockedRegions || []);
+    const isCustomGroup = (route.targetMode || 'custom_group') === 'custom_group';
+    const isExpanded = expandedAppRouteIds.has(route.id);
+    const ruleCnt = (route.domains || []).length + (route.keywords || []).length + (route.processes || []).length;
+    const presetMeta = APP_ROUTE_CATALOG.find((p) => p.id === route.presetId);
+
+    const riskBadge = riskHits.length
+      ? `<span class="pill red xs">🚨 含禁区 ${esc(riskHits.join('/'))}</span>`
+      : hasBlockedSpec
+        ? '<span class="pill green xs">✅ 已避开禁区</span>'
+        : '';
+
+    const landingChipsHtml = selectedLandings.length
+      ? selectedLandings.map((it) => {
+        const bound = (route.landingKeys || []).includes(it.key);
+        const regs = inferRegionsFromCtxs([it]);
+        const isDanger = regs.some((r) => blockedSet.has(r));
+        const cls = `app-bind-chip${bound ? ' active' : ''}${isDanger ? ' danger' : ''}`;
+        const label = `${countryFlag(it.region)} ${it.nodeName}${selectedLandings.filter((x) => x.nodeName === it.nodeName).length > 1 ? ` · ${it.username}` : ''}`;
+        return `<button type="button" class="${cls}" data-app-bind-landing="${esc(route.id)}" data-landing-key="${esc(it.key)}" title="${isDanger ? '该节点属于此 APP 风险禁区，请谨慎绑定' : '点击绑定/取消绑定此自建落地'}">${bound ? '✓ ' : ''}${esc(label)}</button>`;
+      }).join('')
+      : '<span class="sub-note">请先在上方 ① 勾选自建落地节点</span>';
+
+    const regionChipsHtml = EXPORT_REGIONS.map((reg) => {
+      const bound = (route.fallbackRegions || []).includes(reg.code);
+      const isDanger = blockedSet.has(reg.code);
+      const cls = `app-bind-chip${bound ? ' active' : ''}${isDanger ? ' danger' : ''}`;
+      return `<button type="button" class="${cls}" data-app-bind-region="${esc(route.id)}" data-region-code="${esc(reg.code)}" title="${isDanger ? '风控禁区国家' : '叠加该地区机场备选节点'}">${reg.flag} ${esc(reg.label)}</button>`;
+    }).join('');
+
+    return `
+      <div class="app-route-card${riskHits.length ? ' risk-alert' : ''}" data-app-route-id="${esc(route.id)}">
+        <div class="app-route-head">
+          <input class="input app-route-icon-in" data-app-field="icon" data-route-id="${esc(route.id)}" value="${esc(route.icon || '📱')}" maxlength="4" title="策略组图标" />
+          <input class="input app-route-name-in" data-app-field="name" data-route-id="${esc(route.id)}" value="${esc(route.name || '')}" placeholder="APP 名称（如 Bybit）" />
+          <select class="app-route-mode-sel" data-app-field="targetMode" data-route-id="${esc(route.id)}">
+            <option value="custom_group"${route.targetMode === 'custom_group' ? ' selected' : ''}>🎯 独立策略组（自选节点/国家）</option>
+            <option value="exit"${route.targetMode === 'exit' ? ' selected' : ''}>🛡️ 跟随「落地出口」</option>
+            <option value="airport"${route.targetMode === 'airport' ? ' selected' : ''}>⚡ 走「机场直出」</option>
+            <option value="direct"${route.targetMode === 'direct' ? ' selected' : ''}>🟢 DIRECT 直连</option>
+            <option value="reject"${route.targetMode === 'reject' ? ' selected' : ''}>🔴 REJECT 拦截</option>
+          </select>
+          ${riskBadge}
+          <div style="margin-left:auto;display:flex;gap:6px;">
+            <button type="button" class="btn sm" data-app-toggle-rules="${esc(route.id)}">${isExpanded ? '收起规则' : `⚙️ 规则 (${ruleCnt})`}</button>
+            <button type="button" class="btn sm danger" data-app-del="${esc(route.id)}" title="移除此 APP 分流">✕</button>
+          </div>
+        </div>
+        ${presetMeta?.note ? `<div class="sub-note" style="font-size:11.5px;">💡 ${esc(presetMeta.note)}</div>` : ''}
+        ${isCustomGroup ? `
+          <div class="app-route-bind-row">
+            <div class="app-route-bind-group">
+              <span class="app-route-bind-label">绑定自建落地</span>
+              ${landingChipsHtml}
+            </div>
+            <div class="app-route-bind-group">
+              <span class="app-route-bind-label">机场备选国家</span>
+              ${regionChipsHtml}
+            </div>
+          </div>
+        ` : ''}
+        ${isExpanded ? `
+          <div class="app-route-rules-box">
+            <div class="field">
+              <label>域名后缀 (DOMAIN-SUFFIX，每行或逗号分隔)</label>
+              <textarea class="input mono" rows="3" data-app-field="domains" data-route-id="${esc(route.id)}" placeholder="bybit.com&#10;bytick.com">${esc((route.domains || []).join('\n'))}</textarea>
+            </div>
+            <div class="field">
+              <label>域名关键字 (DOMAIN-KEYWORD，可选)</label>
+              <textarea class="input mono" rows="3" data-app-field="keywords" data-route-id="${esc(route.id)}" placeholder="例如：bybit">${esc((route.keywords || []).join('\n'))}</textarea>
+            </div>
+            <div class="field">
+              <label>进程/包名 (可选，仅 PC/原生安卓)</label>
+              <textarea class="input mono" rows="3" data-app-field="processes" data-route-id="${esc(route.id)}" placeholder="鸿蒙出境易/卓易通靠域名生效，通常留空">${esc((route.processes || []).join('\n'))}</textarea>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
   }).join('');
 }
 
@@ -170,6 +318,7 @@ function buildExportOutput(appState) {
     customExitDomains,
     customDirectDomains,
     customRejectDomains,
+    appRoutes: exportAppRoutes,
   };
   const check = validateExportDraft(selected, exportOpts);
 
@@ -180,8 +329,9 @@ function buildExportOutput(appState) {
       vbar.textContent = `⚠️ ${check.errors.join('；')}`;
     } else {
       const exitLabel = check.resolvedExitRegions.length ? check.resolvedExitRegions.join('+') : '仅自建';
-      const customPart = check.customRuleCount ? ` · 自定义规则 ${check.customRuleCount} 条` : '';
-      const summary = `落地 ${check.nodeCount} 个 · 备选国 ${exitLabel} · 前置 ${check.resolvedFrontLabel} · 保护IP ${check.ipCount} 个${customPart}`;
+      const appPart = check.appRouteCount ? ` · APP分流 ${check.appRouteCount} 组` : '';
+      const customPart = check.customRuleCount ? ` · 规则 ${check.customRuleCount} 条` : '';
+      const summary = `落地 ${check.nodeCount} 个 · 备选国 ${exitLabel} · 前置 ${check.resolvedFrontLabel} · 保护IP ${check.ipCount} 个${appPart}${customPart}`;
       if (check.warnings.length) {
         vbar.className = 'export-val-bar warn mb-sm';
         vbar.textContent = `✓ ${summary} ｜ 提示：${check.warnings.join('；')}`;
@@ -290,14 +440,76 @@ export async function openConfigExporter(appState, seedCtx = null) {
 
   selectedExitRegions = new Set(inferRegionsFromCtxs(getSelectedExportItems()));
   selectedFrontRegions = new Set(DEFAULT_APAC_REGIONS);
+  exportAppRoutes = [];
+  expandedAppRouteIds.clear();
   renderRegionChips('exportExitRegionsBox', selectedExitRegions);
   renderRegionChips('exportFrontRegionsBox', selectedFrontRegions);
+  renderAppCatalogBar();
+  renderAppRoutesList();
 
   populateExportAirportOptions(appState);
   renderPresetOptions(appState);
   renderExportChecklist();
   refreshExportPreview(appState);
   openModal('clientExportModal');
+}
+
+/** 从本机 Mihomo 实时连接表一键将漏网根域名带入离线配置生成器（APP 分流或强制走落地出口） */
+export async function openConfigExporterWithDomain(appState, rootDomain, mode = 'app_route') {
+  const dom = String(rootDomain || '').trim().toLowerCase();
+  if (!dom) return;
+  await openConfigExporter(appState, null);
+
+  if (mode === 'custom_exit') {
+    const ta = $('exportCustomExitDomains');
+    if (ta) {
+      const existing = splitToCleanList(ta.value);
+      if (!existing.includes(dom)) existing.push(dom);
+      ta.value = existing.join('\n');
+    }
+    if ($('exportCustomRulesDetails')) $('exportCustomRulesDetails').open = true;
+    refreshExportPreview(appState);
+    showToast(`已将「${dom}」填入「强制走落地出口」，可直接点保存重新导出`);
+    return;
+  }
+
+  // 智能匹配 APP_ROUTE_CATALOG 预设（如 byd3c3.com -> Bybit）；未命中则创建专属自定义 APP 分流并展开规则箱
+  const matchedPreset = APP_ROUTE_CATALOG.find((p) => (
+    (p.domains || []).some((d) => dom === d || dom.endsWith(`.${d}`))
+    || (p.keywords || []).some((k) => dom.includes(k))
+  ));
+  let targetRoute = matchedPreset
+    ? exportAppRoutes.find((r) => r.presetId === matchedPreset.id)
+    : null;
+  if (!targetRoute && matchedPreset) {
+    targetRoute = createAppRouteFromPreset(matchedPreset.id, getSelectedExportItems());
+    if (targetRoute) exportAppRoutes.push(targetRoute);
+  }
+  if (!targetRoute) {
+    const labelBase = dom.split('.')[0].toUpperCase();
+    targetRoute = {
+      id: `app_from_conn_${Date.now().toString(36)}`,
+      presetId: '',
+      name: labelBase.length <= 16 ? labelBase : dom,
+      icon: '🎯',
+      domains: [dom],
+      keywords: [],
+      processes: [],
+      targetMode: 'custom_group',
+      landingKeys: [],
+      fallbackRegions: ['JP', 'TW', 'KR'],
+      blockedRegions: [],
+    };
+    exportAppRoutes.push(targetRoute);
+  } else if (!targetRoute.domains.includes(dom)) {
+    targetRoute.domains.push(dom);
+  }
+
+  expandedAppRouteIds.add(targetRoute.id);
+  renderAppCatalogBar();
+  renderAppRoutesList();
+  refreshExportPreview(appState);
+  showToast(`已将「${dom}」加入「${targetRoute.icon} ${targetRoute.name}」APP 专属分流`);
 }
 
 export function initConfigExporter(appState) {
@@ -312,18 +524,21 @@ export function initConfigExporter(appState) {
     const tile = chk.closest('.export-node-item');
     if (tile) tile.classList.toggle('checked', chk.checked);
     if ($('exportSelectedCount')) $('exportSelectedCount').textContent = `已选 ${getSelectedExportItems().length} 个`;
+    renderAppRoutesList();
     refreshExportPreview(appState);
   });
 
   $('exportSelectAllBtn')?.addEventListener('click', () => {
     exportCandidates.forEach((c) => exportSelectedKeys.add(c.key));
     renderExportChecklist();
+    renderAppRoutesList();
     refreshExportPreview(appState);
   });
 
   $('exportClearAllBtn')?.addEventListener('click', () => {
     exportSelectedKeys.clear();
     renderExportChecklist();
+    renderAppRoutesList();
     refreshExportPreview(appState);
   });
 
@@ -368,8 +583,26 @@ export function initConfigExporter(appState) {
     selectedFrontRegions = new Set(
       Array.isArray(preset.frontRegions) ? preset.frontRegions : DEFAULT_APAC_REGIONS,
     );
+    exportAppRoutes = Array.isArray(preset.appRoutes)
+      ? preset.appRoutes.map((r, idx) => ({
+        id: r.id || `app_loaded_${idx}_${Date.now().toString(36)}`,
+        presetId: r.presetId || '',
+        name: r.name || '',
+        icon: r.icon || '📱',
+        domains: Array.isArray(r.domains) ? [...r.domains] : splitToCleanList(r.domains),
+        keywords: Array.isArray(r.keywords) ? [...r.keywords] : splitToCleanList(r.keywords),
+        processes: Array.isArray(r.processes) ? [...r.processes] : splitToCleanList(r.processes),
+        targetMode: r.targetMode || 'custom_group',
+        landingKeys: Array.isArray(r.landingKeys) ? [...r.landingKeys] : [],
+        fallbackRegions: Array.isArray(r.fallbackRegions) ? [...r.fallbackRegions] : [],
+        blockedRegions: Array.isArray(r.blockedRegions) ? [...r.blockedRegions] : [],
+      }))
+      : [];
+    expandedAppRouteIds.clear();
     renderRegionChips('exportExitRegionsBox', selectedExitRegions);
     renderRegionChips('exportFrontRegionsBox', selectedFrontRegions);
+    renderAppCatalogBar();
+    renderAppRoutesList();
 
     if ($('exportPresetNameInput')) $('exportPresetNameInput').value = preset.name || '';
     if (preset.filename && $('exportFileNameInput')) {
@@ -411,6 +644,19 @@ export function initConfigExporter(appState) {
       customExitDomains: $('exportCustomExitDomains')?.value.trim() || '',
       customDirectDomains: $('exportCustomDirectDomains')?.value.trim() || '',
       customRejectDomains: $('exportCustomRejectDomains')?.value.trim() || '',
+      appRoutes: exportAppRoutes.map((r) => ({
+        id: r.id,
+        presetId: r.presetId || '',
+        name: r.name || '',
+        icon: r.icon || '',
+        domains: Array.isArray(r.domains) ? r.domains : splitToCleanList(r.domains),
+        keywords: Array.isArray(r.keywords) ? r.keywords : splitToCleanList(r.keywords),
+        processes: Array.isArray(r.processes) ? r.processes : splitToCleanList(r.processes),
+        targetMode: r.targetMode || 'custom_group',
+        landingKeys: Array.isArray(r.landingKeys) ? r.landingKeys : [],
+        fallbackRegions: Array.isArray(r.fallbackRegions) ? r.fallbackRegions : [],
+        blockedRegions: Array.isArray(r.blockedRegions) ? r.blockedRegions : [],
+      })),
       filename: $('exportFileNameInput')?.value.trim() || '',
     };
     const idx = list.findIndex((p) => p.id === nextPreset.id);
@@ -428,6 +674,7 @@ export function initConfigExporter(appState) {
   }));
 
   $('delExportPresetBtn')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
     const pid = $('exportPresetSelect')?.value || '';
     if (!pid) return;
     const preset = (appState.localConfig?.exportPresets || []).find((p) => p.id === pid);
@@ -438,7 +685,7 @@ export function initConfigExporter(appState) {
       danger: true,
     });
     if (!ok) return;
-    await withButtonLoading(ev.currentTarget, async () => {
+    await withButtonLoading(btn, async () => {
       try {
         const list = (appState.localConfig?.exportPresets || []).filter((p) => p.id !== pid);
         const res = await invokeCmd('save_export_presets', { presets: list });
@@ -509,6 +756,132 @@ export function initConfigExporter(appState) {
   };
   bindRegionBox('exportExitRegionsBox', selectedExitRegions);
   bindRegionBox('exportFrontRegionsBox', selectedFrontRegions);
+
+  $('exportAppCatalogBar')?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-app-preset]');
+    if (!btn) return;
+    const presetId = btn.dataset.appPreset;
+    if (!presetId) return;
+    const existIdx = exportAppRoutes.findIndex((r) => r.presetId === presetId);
+    if (existIdx >= 0) {
+      const removed = exportAppRoutes.splice(existIdx, 1)[0];
+      expandedAppRouteIds.delete(removed.id);
+      renderAppCatalogBar();
+      renderAppRoutesList();
+      refreshExportPreview(appState);
+      return;
+    }
+    const created = createAppRouteFromPreset(presetId, getSelectedExportItems());
+    if (!created) return;
+    exportAppRoutes.push(created);
+    renderAppCatalogBar();
+    renderAppRoutesList();
+    refreshExportPreview(appState);
+    if ((created.blockedRegions || []).length) {
+      showToast(`已添加「${created.icon} ${created.name}」专属分流（已自动避开 ${created.blockedRegions.join('/')} 禁区）`);
+    }
+  });
+
+  $('addCustomAppRouteBtn')?.addEventListener('click', () => {
+    const id = `app_custom_${Date.now().toString(36)}`;
+    exportAppRoutes.push({
+      id,
+      presetId: '',
+      name: `自定义 APP ${exportAppRoutes.length + 1}`,
+      icon: '📱',
+      domains: [],
+      keywords: [],
+      processes: [],
+      targetMode: 'custom_group',
+      landingKeys: [],
+      fallbackRegions: ['JP', 'TW'],
+      blockedRegions: [],
+    });
+    expandedAppRouteIds.add(id);
+    renderAppRoutesList();
+    refreshExportPreview(appState);
+  });
+
+  $('clearAppRoutesBtn')?.addEventListener('click', () => {
+    if (!exportAppRoutes.length) return;
+    exportAppRoutes = [];
+    expandedAppRouteIds.clear();
+    renderAppCatalogBar();
+    renderAppRoutesList();
+    refreshExportPreview(appState);
+  });
+
+  $('exportAppRoutesList')?.addEventListener('click', (ev) => {
+    const delBtn = ev.target.closest('[data-app-del]');
+    if (delBtn) {
+      const rid = delBtn.dataset.appDel;
+      exportAppRoutes = exportAppRoutes.filter((r) => r.id !== rid);
+      expandedAppRouteIds.delete(rid);
+      renderAppCatalogBar();
+      renderAppRoutesList();
+      refreshExportPreview(appState);
+      return;
+    }
+    const toggleBtn = ev.target.closest('[data-app-toggle-rules]');
+    if (toggleBtn) {
+      const rid = toggleBtn.dataset.appToggleRules;
+      if (expandedAppRouteIds.has(rid)) expandedAppRouteIds.delete(rid);
+      else expandedAppRouteIds.add(rid);
+      renderAppRoutesList();
+      return;
+    }
+    const landBtn = ev.target.closest('[data-app-bind-landing]');
+    if (landBtn) {
+      const route = exportAppRoutes.find((r) => r.id === landBtn.dataset.appBindLanding);
+      const lk = landBtn.dataset.landingKey;
+      if (!route || !lk) return;
+      const list = Array.isArray(route.landingKeys) ? [...route.landingKeys] : [];
+      const idx = list.indexOf(lk);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(lk);
+      route.landingKeys = list;
+      renderAppRoutesList();
+      refreshExportPreview(appState);
+      return;
+    }
+    const regBtn = ev.target.closest('[data-app-bind-region]');
+    if (regBtn) {
+      const route = exportAppRoutes.find((r) => r.id === regBtn.dataset.appBindRegion);
+      const code = regBtn.dataset.regionCode;
+      if (!route || !code) return;
+      const list = Array.isArray(route.fallbackRegions) ? [...route.fallbackRegions] : [];
+      const idx = list.indexOf(code);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(code);
+      route.fallbackRegions = list;
+      renderAppRoutesList();
+      refreshExportPreview(appState);
+    }
+  });
+
+  $('exportAppRoutesList')?.addEventListener('input', (ev) => {
+    const fieldEl = ev.target.closest('[data-app-field]');
+    if (!fieldEl || fieldEl.tagName === 'SELECT') return;
+    const route = exportAppRoutes.find((r) => r.id === fieldEl.dataset.routeId);
+    if (!route) return;
+    const field = fieldEl.dataset.appField;
+    if (field === 'name' || field === 'icon') {
+      route[field] = fieldEl.value;
+    } else if (field === 'domains' || field === 'keywords' || field === 'processes') {
+      route[field] = splitToCleanList(fieldEl.value);
+    }
+    refreshExportPreview(appState);
+  });
+
+  $('exportAppRoutesList')?.addEventListener('change', (ev) => {
+    const sel = ev.target.closest('select[data-app-field="targetMode"]');
+    if (!sel) return;
+    const route = exportAppRoutes.find((r) => r.id === sel.dataset.routeId);
+    if (!route) return;
+    route.targetMode = sel.value;
+    renderAppRoutesList();
+    refreshExportPreview(appState);
+  });
 
   $('clientExportModal')?.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-export-test-url]');

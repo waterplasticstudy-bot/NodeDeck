@@ -31,6 +31,8 @@ const $ = (id) => document.getElementById(id);
 const inFlightPing = new Set();
 const inFlightAlpine = new Set();
 const inFlightExit = new Set();
+const inFlightAutoTraffic = new Set();
+const lastAutoTrafficAt = {};
 let lastDiagText = '';
 
 export function getActiveNatNode(appState) {
@@ -116,7 +118,7 @@ function resolveNatTrafficView(node, exitInfo, alpine) {
       remainText: '',
       percent: Number(pct.toFixed(1)),
       sourceLabel: '容器网卡累计',
-      subNote: '点下方「🪞 识别官方流量页」可同步精确账单',
+      subNote: '点下方「🪞 一键同步官方流量」可静默同步官方账单',
     };
   }
   return {
@@ -126,7 +128,7 @@ function resolveNatTrafficView(node, exitInfo, alpine) {
     remainText: '',
     percent: 0,
     sourceLabel: '待同步',
-    subNote: '点「🪞 识别官方流量页」同步面板官方已用流量',
+    subNote: '点「🪞 一键同步官方流量」静默同步面板官方已用流量',
   };
 }
 
@@ -294,10 +296,10 @@ function renderExitControlCard(appState, node) {
     <div class="card-head">
       <div>
         <h3 class="card-title-lg">🇯🇵 宿主机家宽出口单选与官方流量同步</h3>
-        <div class="sub-note">当前采用面板原生流量计费（无倍率）· 点击右侧按钮可从已登录的 NAT「流量」页一键识别官方本月流量</div>
+        <div class="sub-note">当前采用面板原生流量计费（无倍率）· 点击右侧按钮静默后台一键同步官方本月流量（无需手动弹窗切页）</div>
       </div>
       <div class="toolbar">
-        <button class="btn sm primary" data-action="nat-scrape-traffic">🪞 识别官方流量页</button>
+        <button class="btn sm primary" data-action="nat-scrape-traffic">🪞 一键同步官方流量</button>
         <button class="btn sm" data-action="exit-diag">🩺 落地 IP 与 AI 体检</button>
         <button class="btn sm" data-action="exit-refresh">↻ 刷新状态</button>
       </div>
@@ -436,6 +438,23 @@ async function loadExitStatus(appState, node, force = false) {
         syncedAt: String(Math.floor(Date.now() / 1000)),
         source: 'host-billing',
       };
+    } else if (res.kind === 'jp' && node.portalUrl) {
+      // 日本 NAT 采用面板原生计费：已登录沙箱时自动后台静默同步官方流量（10 分钟节流或手动强制刷新时触发，绝不弹窗打扰）
+      const stale = Date.now() - (lastAutoTrafficAt[node.id] || 0) > 600000;
+      if ((force || stale) && !inFlightAutoTraffic.has(node.id)) {
+        inFlightAutoTraffic.add(node.id);
+        lastAutoTrafficAt[node.id] = Date.now();
+        invokeCmd('sync_dashboard_traffic', { targetKind: 'nat', targetId: node.id, silentOnly: true })
+          .then((syncRes) => {
+            if (!syncRes.needsWindowReady && syncRes.config) {
+              appState.localConfig = syncRes.config;
+              const fresh = getActiveNatNode(appState);
+              if (fresh && fresh.id === node.id) renderNatHeaderAndCards(appState, fresh);
+            }
+          })
+          .catch(() => {})
+          .finally(() => inFlightAutoTraffic.delete(node.id));
+      }
     }
   } catch (err) {
     cache.error = err.message;
@@ -498,7 +517,11 @@ export async function loadNatOverview(appState, forceAlpine = false) {
   ]);
 }
 
-export function initNatOverviewEvents(appState, { openNatEditor, switchTab }) {
+export function initNatOverviewEvents(appState, { openNatEditor, switchTab, openTerminalSb }) {
+  $('natOpenPtyBtn')?.addEventListener('click', () => openTerminalSb());
+  $('natQuickAuditBtn')?.addEventListener('click', () => switchTab('audit'));
+  $('natQuickSbBtn')?.addEventListener('click', () => switchTab('singbox'));
+
   $('natOpenTerminalBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
     const node = getActiveNatNode(appState);
     if (!node) return;

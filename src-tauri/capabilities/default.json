@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "default",
-  "description": "自用面板主窗口最小权限集（外部账号隔离窗口不授予 IPC 权限）",
-  "windows": ["main"],
+  "description": "自用面板主窗口与内嵌远端 sing-box 面板窗口最小权限集（外部账号隔离窗口不授予 IPC 权限）",
+  "windows": ["main", "singbox-panel-*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",

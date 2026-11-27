@@ -3,7 +3,7 @@
  */
 
 import { renderOverviewCharts } from './components/area-chart.js';
-import { initConfigExporter, openConfigExporter } from './components/config-exporter.js';
+import { initConfigExporter, openConfigExporter, openConfigExporterWithDomain } from './components/config-exporter.js';
 import { closeModal, initModals, openModal } from './components/modal.js';
 import { initQrModalEvents } from './components/qr-modal.js';
 import { showToast } from './components/toast.js';
@@ -21,6 +21,12 @@ import { initNatOverviewEvents, loadNatOverview, renderNatPingChart } from './pa
 import { hideBanner, initOverviewEvents, loadOverview } from './pages/overview.js';
 import { applyAppearancePrefs, initSettingsEvents, loadAppearancePrefs, loadConfigUI } from './pages/settings.js';
 import { initSingboxEvents, loadSingboxConfig } from './pages/singbox.js';
+import {
+  fitActiveTerminal,
+  initTerminalEvents,
+  loadTerminal,
+  openTerminalWithCmd,
+} from './pages/terminal.js';
 import { initUsersEvents, loadUsers } from './pages/users.js';
 import { isDemoMode, onTrayRefresh, setDemoMode, syncNativeTheme, withButtonLoading } from './utils/bridge.js';
 import { getDemoSeedHistories, resetDemoState } from './utils/demo-mock.js';
@@ -111,17 +117,34 @@ function applyTheme(theme) {
 
 function renderNodeSwitcher() {
   const sel = document.getElementById('nodeSwitcher');
-  if (!sel) return;
+  const pillsEl = document.getElementById('quickNodePills');
   const vpsName = appState.localConfig?.name || 'My Primary VPS';
   const vpsFlag = countryFlag(appState.localConfig?.region || 'US');
   const nats = appState.localConfig?.natNodes || [];
-  sel.innerHTML = `
-    <option value="${MAIN_VPS_NODE_ID}">${vpsFlag} ${esc(vpsName)} (主 VPS)</option>
-    ${nats.map((n) => `<option value="${esc(n.id)}">${countryFlag(n.region)} ${esc(n.name)} (NAT)</option>`).join('')}
-  `;
   const exists = appState.activeNodeId === MAIN_VPS_NODE_ID || nats.some((n) => n.id === appState.activeNodeId);
   if (!exists) appState.activeNodeId = MAIN_VPS_NODE_ID;
-  sel.value = appState.activeNodeId;
+
+  if (sel) {
+    sel.innerHTML = `
+      <option value="${MAIN_VPS_NODE_ID}">${vpsFlag} ${esc(vpsName)} (主 VPS)</option>
+      ${nats.map((n) => `<option value="${esc(n.id)}">${countryFlag(n.region)} ${esc(n.name)} (NAT)</option>`).join('')}
+    `;
+    sel.value = appState.activeNodeId;
+  }
+
+  if (pillsEl) {
+    const items = [
+      { id: MAIN_VPS_NODE_ID, flag: vpsFlag, name: vpsName, tag: '主 VPS' },
+      ...nats.map((n) => ({ id: n.id, flag: countryFlag(n.region), name: n.name, tag: 'NAT' })),
+    ];
+    pillsEl.innerHTML = items.map((it) => `
+      <button class="quick-node-pill ${appState.activeNodeId === it.id ? 'active' : ''}" type="button" data-quick-node="${esc(it.id)}">
+        <span>${it.flag}</span>
+        <span>${esc(it.name)}</span>
+        <span class="qn-tag">${esc(it.tag)}</span>
+      </button>
+    `).join('');
+  }
 }
 
 async function loadActiveOverview(force = false) {
@@ -145,6 +168,9 @@ async function refreshCurrentTab(force = false) {
       break;
     case 'mihomo':
       await loadMihomo(appState);
+      break;
+    case 'terminal':
+      await loadTerminal(appState);
       break;
     case 'singbox':
       await loadSingboxConfig(appState);
@@ -183,6 +209,9 @@ function switchTab(tabName, filterUser = null) {
     appState.pendingAuditFilter = filterUser;
   }
   refreshCurrentTab();
+  if (validTab === 'terminal') {
+    requestAnimationFrame(() => fitActiveTerminal());
+  }
 }
 
 function switchToNode(nodeId, targetTab = null) {
@@ -192,6 +221,9 @@ function switchToNode(nodeId, targetTab = null) {
   }
   const sel = document.getElementById('nodeSwitcher');
   if (sel) sel.value = nodeId;
+  document.querySelectorAll('#quickNodePills [data-quick-node]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.quickNode === nodeId);
+  });
   const svcOut = document.getElementById('svcOutput');
   if (svcOut) {
     svcOut.textContent = '';
@@ -245,6 +277,7 @@ function buildPaletteActions() {
     { icon: '📦', title: '离线生成客户端配置文件', sub: '支持多节点组合打包与常用方案预设 (.yaml / .js)', run: () => openConfigExporter(appState, null) },
     { icon: '📊', title: '前往 · 节点总览', sub: '实时监控主 VPS / NAT 系统与出口状态', run: () => switchTab('overview') },
     { icon: '💻', title: '前往 · 本机 Mihomo', sub: '切换策略组、全组测速与 AI 连通性探测', run: () => switchTab('mihomo') },
+    { icon: '⌨️', title: '打开 · 交互终端与 sing-box 脚本 (sb)', sub: '内置免密 SSH 多标签终端 + 右侧快捷命令面板', run: () => { switchTab('terminal'); openTerminalWithCmd(appState, 'sb'); } },
     { icon: '🕵️', title: '前往 · 成员流量与在线监控', sub: '查看活跃连接、防外泄预警与定位域拦截', run: () => switchTab('audit') },
     { icon: '🧩', title: '前往 · sing-box 节点与协议', sub: '增删改入站协议、端口、密钥与历史备份回滚', run: () => switchTab('singbox') },
     { icon: '👥', title: '前往 · 用户与节点归属', sub: '全节点用户矩阵、二维码与配置生成', run: () => switchTab('users') },
@@ -415,6 +448,15 @@ async function bootstrap() {
     switchToNode(ev.target.value);
   });
 
+  document.getElementById('quickNodePills')?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-quick-node]');
+    if (!btn) return;
+    const nextId = btn.dataset.quickNode;
+    if (nextId && nextId !== appState.activeNodeId) {
+      switchToNode(nextId);
+    }
+  });
+
   document.querySelectorAll('#pollSeg button').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#pollSeg button').forEach((b) => b.classList.remove('active'));
@@ -440,6 +482,15 @@ async function bootstrap() {
     refreshNodeSwitcher: () => renderNodeSwitcher(),
     openNatEditor: (natId) => openNatEditor(appState, natId),
     openConfigExporter: (seedCtx = null) => openConfigExporter(appState, seedCtx),
+    openConfigExporterWithDomain: (domain, mode = 'app_route') => openConfigExporterWithDomain(appState, domain, mode),
+    openTerminalSb: () => {
+      switchTab('terminal');
+      openTerminalWithCmd(appState, 'sb');
+    },
+    openTerminalShell: () => {
+      switchTab('terminal');
+      loadTerminal(appState, { autoConnect: true, initialCmd: null });
+    },
     onNodesChanged: (deletedId = null) => {
       if (deletedId && appState.activeNodeId === deletedId) {
         appState.activeNodeId = MAIN_VPS_NODE_ID;
@@ -451,9 +502,12 @@ async function bootstrap() {
     },
   };
 
+  document.getElementById('quickOpenSbBtn')?.addEventListener('click', () => ctx.openTerminalSb());
+
   initOverviewEvents(appState, ctx);
   initNatOverviewEvents(appState, ctx);
   initMihomoEvents(appState, ctx);
+  initTerminalEvents(appState, ctx);
   initAuditEvents(appState, ctx);
   initSingboxEvents(appState, ctx);
   initUsersEvents(appState, ctx);
@@ -462,14 +516,22 @@ async function bootstrap() {
   initSettingsEvents(appState, ctx);
 
   let resizeTimer = null;
-  window.addEventListener('resize', () => {
+  const scheduleAdaptiveReflow = () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (appState.tab !== 'overview') return;
-      if (appState.activeNodeId === MAIN_VPS_NODE_ID) renderOverviewCharts(appState);
-      else renderNatPingChart(appState, appState.activeNodeId);
-    }, 120);
-  });
+      if (appState.tab === 'overview') {
+        if (appState.activeNodeId === MAIN_VPS_NODE_ID) renderOverviewCharts(appState);
+        else renderNatPingChart(appState, appState.activeNodeId);
+      } else if (appState.tab === 'terminal') {
+        fitActiveTerminal();
+      }
+    }, 70);
+  };
+  window.addEventListener('resize', scheduleAdaptiveReflow);
+  if (typeof ResizeObserver === 'function') {
+    const mainEl = document.querySelector('.main');
+    if (mainEl) new ResizeObserver(scheduleAdaptiveReflow).observe(mainEl);
+  }
 
   onTrayRefresh(() => {
     loadActiveOverview(true);

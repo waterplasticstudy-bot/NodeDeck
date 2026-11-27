@@ -68,40 +68,55 @@ fn sanitize_singbox_json(val: &mut Value) {
 pub(crate) fn extract_users_detail(raw_inb: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     let itype = raw_inb.get("type").and_then(Value::as_str).unwrap_or("");
+    let server_pwd = raw_inb.get("password").and_then(Value::as_str).unwrap_or("");
     if let Some(users) = raw_inb.get("users").and_then(Value::as_array) {
-        for u in users {
-            let name = u
-                .get("name")
-                .or_else(|| u.get("username"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let username = u
-                .get("username")
-                .or_else(|| u.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let uuid = u.get("uuid").and_then(Value::as_str).unwrap_or("");
-            let password = u.get("password").and_then(Value::as_str).unwrap_or("");
-            let flow = u.get("flow").and_then(Value::as_str).unwrap_or("");
-            out.push(json!({
-                "name": name,
-                "username": username,
-                "uuid": uuid,
-                "password": password,
-                "flow": flow
-            }));
+        if !users.is_empty() {
+            for u in users {
+                let name = u
+                    .get("name")
+                    .or_else(|| u.get("username"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let username = u
+                    .get("username")
+                    .or_else(|| u.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let uuid = u.get("uuid").and_then(Value::as_str).unwrap_or("");
+                let raw_user_pwd = u.get("password").and_then(Value::as_str).unwrap_or("");
+                // SS-2022 EIH 单端口多用户：对外导出自动拼装 <server_psk>:<user_psk>，保留 userPassword 供单独编辑
+                let client_pwd = if itype == "shadowsocks"
+                    && !server_pwd.is_empty()
+                    && !raw_user_pwd.is_empty()
+                    && !raw_user_pwd.contains(':')
+                {
+                    format!("{server_pwd}:{raw_user_pwd}")
+                } else {
+                    raw_user_pwd.to_string()
+                };
+                let flow = u.get("flow").and_then(Value::as_str).unwrap_or("");
+                out.push(json!({
+                    "name": name,
+                    "username": username,
+                    "uuid": uuid,
+                    "password": client_pwd,
+                    "userPassword": raw_user_pwd,
+                    "flow": flow
+                }));
+            }
+            return out;
         }
-    } else if itype == "shadowsocks" {
-        if let Some(pwd) = raw_inb.get("password").and_then(Value::as_str) {
-            let tag = raw_inb.get("tag").and_then(Value::as_str).unwrap_or("ss-user");
-            out.push(json!({
-                "name": tag,
-                "username": tag,
-                "uuid": "",
-                "password": pwd,
-                "flow": ""
-            }));
-        }
+    }
+    if itype == "shadowsocks" && !server_pwd.is_empty() {
+        let tag = raw_inb.get("tag").and_then(Value::as_str).unwrap_or("ss-user");
+        out.push(json!({
+            "name": tag,
+            "username": tag,
+            "uuid": "",
+            "password": server_pwd,
+            "userPassword": server_pwd,
+            "flow": ""
+        }));
     }
     out
 }
@@ -237,8 +252,50 @@ pub async fn fetch_alpine_config_fast(
     Ok(assemble_config_response(node, parsed, raw, Vec::new()))
 }
 
+fn ss2022_key_len(method: &str) -> Option<usize> {
+    match method.trim() {
+        "2022-blake3-aes-128-gcm" => Some(16),
+        "2022-blake3-aes-256-gcm" | "2022-blake3-chacha20-poly1305" => Some(32),
+        _ => None,
+    }
+}
+
+fn gen_ss2022_psk(byte_len: usize) -> String {
+    if byte_len == 32 {
+        let mut buf = [0u8; 32];
+        buf[..16].copy_from_slice(Uuid::new_v4().as_bytes());
+        buf[16..].copy_from_slice(Uuid::new_v4().as_bytes());
+        B64.encode(buf)
+    } else {
+        B64.encode(Uuid::new_v4().as_bytes())
+    }
+}
+
 fn gen_ss2022_password() -> String {
-    B64.encode(Uuid::new_v4().as_bytes())
+    gen_ss2022_psk(16)
+}
+
+fn normalize_ss2022_user_psk(raw: &str, key_len: usize) -> Result<String, SshError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(gen_ss2022_psk(key_len));
+    }
+    let part = trimmed.rsplit(':').next().unwrap_or(trimmed).trim();
+    let decoded = B64.decode(part).map_err(|_| {
+        SshError::new(
+            "VALIDATION_ERROR",
+            format!("SS-2022 用户密钥必须为 {key_len} 字节标准 Base64（可留空自动生成）"),
+            None,
+        )
+    })?;
+    if decoded.len() != key_len {
+        return Err(SshError::new(
+            "VALIDATION_ERROR",
+            format!("SS-2022 用户密钥长度应为 {key_len} 字节，当前为 {} 字节", decoded.len()),
+            None,
+        ));
+    }
+    Ok(part.to_string())
 }
 
 fn gen_hex_password() -> String {
@@ -428,28 +485,51 @@ async fn build_alpine_inbound(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    existing
+                        .filter(|e| e.get("type").and_then(Value::as_str) == Some("shadowsocks"))
+                        .and_then(|e| e.get("method").and_then(Value::as_str))
+                })
                 .unwrap_or(SS2022_DEFAULT_METHOD);
+            let req_key_len = ss2022_key_len(method);
             let raw_pwd = req
                 .password
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let final_pwd = match raw_pwd {
-                Some(p) if method != SS2022_DEFAULT_METHOD => p.to_string(),
-                Some(p) => match B64.decode(p) {
-                    Ok(bytes) if bytes.len() == 16 => p.to_string(),
-                    _ => gen_ss2022_password(),
+            let existing_pwd = existing
+                .filter(|e| e.get("type").and_then(Value::as_str) == Some("shadowsocks"))
+                .and_then(|e| e.get("password").and_then(Value::as_str))
+                .filter(|s| !s.is_empty());
+            let chosen = raw_pwd.or(existing_pwd);
+            let final_pwd = match (chosen, req_key_len) {
+                (Some(p), Some(klen)) => match B64.decode(p) {
+                    Ok(bytes) if bytes.len() == klen => p.to_string(),
+                    _ => gen_ss2022_psk(klen),
                 },
-                None => gen_ss2022_password(),
+                (Some(p), None) => p.to_string(),
+                (None, Some(klen)) => gen_ss2022_psk(klen),
+                (None, None) => gen_ss2022_password(),
             };
-            json!({
+            let mut obj = json!({
                 "type": "shadowsocks",
                 "tag": tag,
                 "listen": "::",
                 "listen_port": port,
                 "method": method,
                 "password": final_pwd
-            })
+            });
+            // 编辑现有 SS-2022 节点时完整保留 EIH 多用户列表
+            if let Some(prev_users) = existing
+                .filter(|e| e.get("type").and_then(Value::as_str) == Some("shadowsocks"))
+                .and_then(|e| e.get("users").and_then(Value::as_array))
+                .filter(|a| !a.is_empty())
+            {
+                if req_key_len.is_some() {
+                    obj["users"] = Value::Array(prev_users.clone());
+                }
+            }
+            obj
         }
         "vless" => {
             let sni = req
@@ -803,9 +883,65 @@ pub async fn mutate_alpine_inbound(
                     msg = format!("已更新 {} [{}] VLESS 用户「{}」", node.name, tag, uname);
                 }
                 "shadowsocks" => {
-                    let next_pwd = if pwd.is_empty() { gen_ss2022_password() } else { pwd.to_string() };
-                    inb["password"] = json!(next_pwd);
-                    msg = format!("已更新 {} [{}] Shadowsocks 密码", node.name, tag);
+                    let method = inb
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .unwrap_or(SS2022_DEFAULT_METHOD)
+                        .to_string();
+                    if let Some(key_len) = ss2022_key_len(&method) {
+                        // 确保服务端主 PSK 有效
+                        let srv_valid = inb
+                            .get("password")
+                            .and_then(Value::as_str)
+                            .and_then(|p| B64.decode(p).ok())
+                            .is_some_and(|b| b.len() == key_len);
+                        if !srv_valid {
+                            inb["password"] = json!(gen_ss2022_psk(key_len));
+                        }
+                        let users = ensure_users_array(inb)?;
+                        if !orig_name.is_empty() && !users.is_empty() {
+                            if uname != orig_name
+                                && users
+                                    .iter()
+                                    .any(|u| u.get("name").and_then(Value::as_str) == Some(uname))
+                            {
+                                return Err(SshError::new(
+                                    "VALIDATION_ERROR",
+                                    format!("用户「{uname}」已存在"),
+                                    None,
+                                ));
+                            }
+                            let target = users
+                                .iter_mut()
+                                .find(|u| u.get("name").and_then(Value::as_str) == Some(orig_name))
+                                .ok_or_else(|| {
+                                    SshError::new("NOT_FOUND", format!("未找到用户 {orig_name}"), None)
+                                })?;
+                            target["name"] = json!(uname);
+                            if !pwd.is_empty() {
+                                let next_user_psk = normalize_ss2022_user_psk(pwd, key_len)?;
+                                target["password"] = json!(next_user_psk);
+                            }
+                        } else {
+                            if users
+                                .iter()
+                                .any(|u| u.get("name").and_then(Value::as_str) == Some(uname))
+                            {
+                                return Err(SshError::new(
+                                    "VALIDATION_ERROR",
+                                    format!("用户「{uname}」已存在"),
+                                    None,
+                                ));
+                            }
+                            let next_user_psk = normalize_ss2022_user_psk(pwd, key_len)?;
+                            users.push(json!({ "name": uname, "password": next_user_psk }));
+                        }
+                        msg = format!("已更新 {} [{}] SS-2022 EIH 用户「{}」", node.name, tag, uname);
+                    } else {
+                        let next_pwd = if pwd.is_empty() { gen_ss2022_password() } else { pwd.to_string() };
+                        inb["password"] = json!(next_pwd);
+                        msg = format!("已更新 {} [{}] Shadowsocks 密码", node.name, tag);
+                    }
                 }
                 _ => {
                     return Err(SshError::new("VALIDATION_ERROR", format!("协议 {itype} 不支持独立用户编辑"), None));
@@ -857,4 +993,55 @@ pub async fn mutate_alpine_inbound(
         }),
         derived_pub_key,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_users_detail_composes_ss2022_eih_and_keeps_legacy() {
+        let srv_psk = gen_ss2022_psk(16);
+        let u1_psk = gen_ss2022_psk(16);
+        let u2_psk = gen_ss2022_psk(16);
+        let multi = json!({
+            "type": "shadowsocks",
+            "tag": "ss2022-demo",
+            "method": "2022-blake3-aes-128-gcm",
+            "password": srv_psk,
+            "users": [
+                { "name": "DemoUserA", "password": u1_psk },
+                { "name": "DemoUserB", "password": u2_psk }
+            ]
+        });
+        let detail = extract_users_detail(&multi);
+        assert_eq!(detail.len(), 2);
+        assert_eq!(detail[0]["name"].as_str(), Some("DemoUserA"));
+        assert_eq!(
+            detail[0]["password"].as_str().unwrap(),
+            format!("{srv_psk}:{u1_psk}")
+        );
+        assert_eq!(detail[0]["userPassword"].as_str(), Some(u1_psk.as_str()));
+
+        let legacy = json!({
+            "type": "shadowsocks",
+            "tag": "ss-old",
+            "method": "2022-blake3-aes-128-gcm",
+            "password": srv_psk
+        });
+        let leg_detail = extract_users_detail(&legacy);
+        assert_eq!(leg_detail.len(), 1);
+        assert_eq!(leg_detail[0]["password"].as_str(), Some(srv_psk.as_str()));
+    }
+
+    #[test]
+    fn normalize_ss2022_user_psk_validates_length_and_strips_server_prefix() {
+        let srv = gen_ss2022_psk(16);
+        let usr = gen_ss2022_psk(16);
+        let combined = format!("{srv}:{usr}");
+        assert_eq!(normalize_ss2022_user_psk(&combined, 16).unwrap(), usr);
+        assert!(normalize_ss2022_user_psk("too-short", 16).is_err());
+        let auto = normalize_ss2022_user_psk("", 16).unwrap();
+        assert_eq!(B64.decode(auto).unwrap().len(), 16);
+    }
 }

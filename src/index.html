@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="./styles/tokens.css" />
   <link rel="stylesheet" href="./styles/layout.css" />
   <link rel="stylesheet" href="./styles/components.css" />
+  <link rel="stylesheet" href="./vendor/xterm.css" />
 </head>
 <body>
   <aside class="sidebar">
@@ -14,7 +15,7 @@
       <div class="brand-row">
         <img class="app-icon-img" src="./assets/app-icon.png" alt="NodeDeck" />
         <div>
-          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.2.1</span></h1>
+          <h1>NodeDeck <span class="pill blue xs ver-tag">v1.4.0</span></h1>
           <small id="sideHost" class="mono">等待连接...</small>
         </div>
       </div>
@@ -33,6 +34,10 @@
     <button class="nav-btn" data-tab="mihomo">
       <span class="left"><span>💻</span><span>本机 Mihomo</span></span>
       <span class="nav-badge num" id="navMhBadge">--</span>
+    </button>
+    <button class="nav-btn" data-tab="terminal">
+      <span class="left"><span>⌨️</span><span>终端与脚本 (sb)</span></span>
+      <span class="nav-badge num" id="navTermBadge">SSH</span>
     </button>
     <button class="nav-btn" data-tab="audit">
       <span class="left"><span>🕵️</span><span>成员流量与在线监控</span></span>
@@ -100,6 +105,13 @@
         <button class="btn primary" id="refreshBtn">↻ 刷新</button>
       </div>
     </header>
+
+    <div class="quick-node-bar" id="quickNodeBar">
+      <div class="quick-node-pills" id="quickNodePills"></div>
+      <div class="toolbar">
+        <button class="btn sm" id="quickOpenSbBtn" title="在内置交互终端中直接为当前节点打开 sing-box 管理脚本 (sb)">⌨️ 当前节点 sb 脚本</button>
+      </div>
+    </div>
 
     <div class="banner" id="setupBanner"></div>
 
@@ -272,7 +284,10 @@
                 <h3 class="card-title-lg">主机档案与最近 SSH 登录</h3>
                 <div class="sub-note" id="sysOsLine">--</div>
               </div>
-              <button class="btn sm" id="quickIpBtn">🌍 检测出口 IP</button>
+              <div class="toolbar">
+                <button class="btn sm primary" id="ovOpenSbBtn">⌨️ 打开 sb 脚本</button>
+                <button class="btn sm" id="quickIpBtn">🌍 检测出口 IP</button>
+              </div>
             </div>
             <div class="ios-list mb-md">
               <div class="ios-row">
@@ -303,10 +318,13 @@
               <div class="sub-note" id="natSubLine">--</div>
             </div>
             <div class="toolbar">
-              <button class="btn primary sm" id="natOpenTerminalBtn">🖥️ 打开官方 Web 终端 / 面板</button>
-              <button class="btn sm" id="natPingBtn">⚡ 测端口延迟</button>
-              <button class="btn sm" id="natCopyAddrBtn">📋 复制连接信息</button>
-              <button class="btn sm" id="natEditCurBtn">✏️ 编辑节点</button>
+              <button class="btn primary sm" id="natOpenPtyBtn">⌨️ 终端 / sb 脚本</button>
+              <button class="btn sm" id="natOpenTerminalBtn">🖥️ 官方后台</button>
+              <button class="btn sm" id="natQuickAuditBtn">🕵️ 成员流量</button>
+              <button class="btn sm" id="natQuickSbBtn">🧩 协议配置</button>
+              <button class="btn sm" id="natPingBtn">⚡ 测延迟</button>
+              <button class="btn sm" id="natCopyAddrBtn">📋 复制链接</button>
+              <button class="btn sm" id="natEditCurBtn">✏️ 编辑</button>
             </div>
           </div>
           <div class="grid-4" id="natKpiGrid"></div>
@@ -497,7 +515,7 @@
               <div class="row-inline">
                 <h3 class="card-title-lg">本机实时连接与分流排查</h3>
                 <span class="pill blue num" id="mhTableCount">0 条</span>
-                <span class="sub-note">（右键单元格可复制域名/规则）</span>
+                <span class="sub-note">（右键任意行：复制 / 一键加入 APP 分流 / 掐断）</span>
               </div>
               <div class="toolbar">
                 <div class="seg" id="mhFilterSeg">
@@ -575,6 +593,73 @@
             </table>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB: INTERACTIVE SSH TERMINAL & SB SCRIPT ==================== -->
+    <section class="tab" id="tab-terminal">
+      <div class="term-workbench" id="termWorkbench">
+        <div class="term-main">
+          <div class="term-topbar">
+            <div class="term-tabs-wrap">
+              <div class="term-tabs" id="termTabList"></div>
+              <button class="term-icon-btn" id="termAddTabBtn" type="button" title="为当前节点新建终端标签">＋</button>
+            </div>
+            <div class="term-controls">
+              <button class="term-icon-btn accent" id="termRunSbBtn" type="button" title="在当前节点直接启动 sing-box 管理脚本 (sb)">🧩 打开 sb 脚本</button>
+              <span class="term-status-pill closed" id="termConnPill">未连接</span>
+              <span class="term-host-pill" id="termHostBadge">Shell</span>
+              <select class="term-font-sel" id="termFontSizeSel" title="终端字体大小">
+                <option value="12">12px</option>
+                <option value="13">13px</option>
+                <option value="14" selected>14px</option>
+                <option value="15">15px</option>
+                <option value="16">16px</option>
+                <option value="18">18px</option>
+              </select>
+              <button class="term-icon-btn" id="termPasteBtn" type="button" title="粘贴剪贴板 (Ctrl+Shift+V)">📋</button>
+              <button class="term-icon-btn" id="termClearBtn" type="button" title="清屏">🧹</button>
+              <button class="term-icon-btn" id="termReconnectBtn" type="button" title="重连当前标签">↻</button>
+              <button class="term-icon-btn" id="termToggleSnippetsBtn" type="button" title="显示 / 隐藏右侧快捷命令">⚡ 快捷命令</button>
+              <button class="term-icon-btn" id="termMaxBtn" type="button" title="终端沉浸全屏 (Esc 退出)">⛶</button>
+            </div>
+          </div>
+
+          <div class="term-stage-wrap">
+            <div class="term-stage" id="termStage"></div>
+            <div class="term-empty" id="termEmptyState"></div>
+          </div>
+        </div>
+
+        <button class="term-collapse-btn" id="termDrawerCollapseBtn" type="button" title="收起快捷命令面板">›</button>
+
+        <aside class="term-drawer" id="termDrawer">
+          <div class="term-drawer-head">
+            <div class="flex-between">
+              <div>
+                <div class="term-drawer-kicker">本地加密存储 · 零云端</div>
+                <h3 class="term-drawer-title">快捷命令</h3>
+              </div>
+              <button class="term-icon-btn" id="termAddSnippetBtn" type="button">＋ 新建</button>
+            </div>
+            <div class="term-drawer-sub">保存常用命令，单击选中 / 双击直接发送到当前终端</div>
+            <div class="term-drawer-badges">
+              <span class="term-mini-badge">本地保存</span>
+              <span class="term-mini-badge muted" id="termSnippetsCount">共 0 条</span>
+            </div>
+          </div>
+
+          <div class="snippet-list" id="termSnippetsList"></div>
+
+          <div class="snippet-footer">
+            <div class="snippet-sel-lbl" id="termSnippetSelectedLabel">未选中快捷命令</div>
+            <div class="snippet-action-row">
+              <button class="snippet-exec-btn" id="termSnippetExecBtn" type="button">▷ 执行</button>
+              <button class="snippet-del-btn" id="termSnippetDelBtn" type="button">🗑️ 删除</button>
+            </div>
+            <div class="snippet-foot-hint">会直接发送到当前激活终端并立即执行。</div>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -666,7 +751,9 @@
               <div class="sub-note" id="sbScopeSub">每次修改自动备份 → <code>sing-box check</code> 语法校验 → 自动重启与失败回滚</div>
             </div>
             <div class="toolbar">
-              <button class="btn hidden" id="sbOpenNatTermBtn">🖥️ 官方 Web 终端</button>
+              <button class="btn hidden" id="sbOpenNatTermBtn">🖥️ 官方后台</button>
+              <button class="btn" id="sbOpenCliBtn">⌨️ 打开 sb 交互脚本</button>
+              <button class="btn" id="sbOpenRemotePanelBtn">📊 远端连接监控</button>
               <button class="btn" id="sbOpenExportBtn">📦 生成配置文件</button>
               <button class="btn primary" id="openAddInbBtn">＋ 新增入站节点</button>
             </div>
@@ -784,8 +871,9 @@
               <button class="btn" id="svcReloadBtn" data-svc="reload">⚡ 校验重载</button>
               <button class="btn" data-svc="check">✅ 语法检查</button>
               <button class="btn" data-svc="ports">🔌 监听端口</button>
+              <button class="btn" id="logsOpenPtyBtn">⌨️ 打开交互终端</button>
               <button class="btn" id="logsIpCheckBtn">🌍 出口 IP 体检</button>
-              <button class="btn hidden" id="logsNatTerminalBtn">🖥️ 官方 Web 终端</button>
+              <button class="btn hidden" id="logsNatTerminalBtn">🖥️ 官方后台</button>
             </div>
           </div>
           <pre class="terminal compact hidden" id="svcOutput"></pre>
@@ -844,6 +932,7 @@
             <div class="sub-note">支持双模按需查流：①「🪞 识别流量」免订阅直读已登录的独立窗口仪表盘；② 可选填写订阅链接后手动单次「↻ 订阅查流」（绝不后台轮询）</div>
           </div>
           <div class="toolbar">
+            <button class="btn sm" id="syncAllAssetsTrafficBtn">↻ 一键同步全部流量</button>
             <button class="btn sm" id="pingAllNatBtn">⚡ 全部 NAT 测速</button>
             <button class="btn primary sm" id="addAccountBtn">＋ 新增账号</button>
             <button class="btn sm" id="addNatBtn">＋ 新增 NAT</button>
@@ -974,18 +1063,6 @@
       </div>
     </section>
   </main>
-
-  <!-- Unified Apple Confirm Modal -->
-  <div class="modal-bg" id="confirmModal">
-    <div class="modal">
-      <h3 id="confirmModalTitle">确认操作</h3>
-      <p class="modal-desc" id="confirmModalDesc"></p>
-      <div class="toolbar toolbar-end">
-        <button class="btn" id="confirmModalCancel">取消</button>
-        <button class="btn primary" id="confirmModalOk">确认</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Modal: Edit / Create Provider Account -->
   <div class="modal-bg" id="accountEditModal">
@@ -1262,7 +1339,7 @@
           <label>② 生成格式（纯离线本地文件）</label>
           <select id="exportFormatSelect">
             <option value="all_platform_yaml">全平台单文件配置 · Win10/11 / iOS 蓝猫 / 鸿蒙 4·7 (.yaml)</option>
-            <option value="bettbox_js">Bettbox / Clash Verge 万能覆写脚本 v4.3 (.js)</option>
+            <option value="bettbox_js">Bettbox / Clash Verge 万能覆写脚本 v4.5 (.js)</option>
           </select>
         </div>
         <div class="field">
@@ -1367,6 +1444,22 @@
         </label>
       </div>
 
+      <div class="sub-panel mb-md">
+        <div class="flex-between mb-xs">
+          <div class="row-inline">
+            <strong style="font-size:13px;">④ 自定义 APP 专属分流与节点绑定（防风控 · 支持自由添加）</strong>
+            <span class="pill blue xs" id="exportAppRoutesCount">0 项</span>
+          </div>
+          <div class="toolbar">
+            <button class="btn sm primary" type="button" id="addCustomAppRouteBtn">＋ 自定义 APP</button>
+            <button class="btn sm" type="button" id="clearAppRoutesBtn">清空</button>
+          </div>
+        </div>
+        <div class="sub-note mb-xs">点下方常用 APP 一键加入（自动避开美/港/新等风控禁区），或自定义任意软件；基于纯域名/关键字匹配，鸿蒙卓易通/出境易、iOS、Mac、Windows 100% 通用：</div>
+        <div class="region-chip-row mb-sm" id="exportAppCatalogBar"></div>
+        <div class="app-routes-list" id="exportAppRoutesList"></div>
+      </div>
+
       <details class="sub-panel mb-md" id="exportCustomRulesDetails">
         <summary style="cursor:pointer;font-weight:600;font-size:13px;">🧩 可选：可视化自定义分流规则箱（免手写 YAML，自动去重校验）</summary>
         <div class="form-grid mt-sm" style="grid-template-columns:repeat(3,minmax(0,1fr));">
@@ -1427,8 +1520,63 @@
     </div>
   </div>
 
+  <!-- Modal: Per-Member Monthly Traffic Quota (Local Only) -->
+  <div class="modal-bg" id="memberQuotaModal">
+    <div class="modal">
+      <h3 id="memberQuotaModalTitle">🎯 设置月度流量配额</h3>
+      <div class="sub-note mb-md">纯本地参考上限（仅保存在本机 <code>config.json</code>），达 80% 橙色提醒、超 100% 红色标亮，绝不主动断网。</div>
+      <div class="field mb-lg">
+        <label>月度参考配额 (GB，填 0 或留空则取消上限)</label>
+        <input class="input mono" id="memberQuotaInput" type="number" step="1" min="0" placeholder="例如 100" />
+      </div>
+      <div class="toolbar toolbar-between">
+        <button class="btn sm" id="clearMemberQuotaBtn">取消配额</button>
+        <div class="toolbar">
+          <button class="btn" id="cancelMemberQuotaBtn">关闭</button>
+          <button class="btn primary" id="saveMemberQuotaBtn">保存配额</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Terminal Quick Command Snippet -->
+  <div class="modal-bg" id="snippetEditModal">
+    <div class="modal">
+      <h3 id="snippetModalTitle">新建快捷命令</h3>
+      <div class="field mb-md">
+        <label>命令名称（简短备注）</label>
+        <input class="input" id="snippetTitleInput" placeholder="例如：查看内存 / 打开 sb 面板" />
+      </div>
+      <div class="field mb-lg">
+        <label>要执行的 Shell 命令</label>
+        <textarea class="input mono" id="snippetCmdInput" rows="4" placeholder="例如：free -m&#10;或：sb"></textarea>
+      </div>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="snippetCancelBtn" type="button">取消</button>
+        <button class="btn primary" id="snippetSaveBtn" type="button">保存命令</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Context Menu for Mihomo Connections Table -->
+  <div class="ctx-menu hidden" id="mhConnCtxMenu"></div>
+
+  <!-- Unified Apple Confirm Modal (Always mounted last + z-index 950 so nested dialogs never get occluded) -->
+  <div class="modal-bg" id="confirmModal">
+    <div class="modal">
+      <h3 id="confirmModalTitle">确认操作</h3>
+      <p class="modal-desc" id="confirmModalDesc"></p>
+      <div class="toolbar toolbar-end">
+        <button class="btn" id="confirmModalCancel">取消</button>
+        <button class="btn primary" id="confirmModalOk">确认</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
+  <script src="./vendor/xterm.js"></script>
+  <script src="./vendor/xterm-addon-fit.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

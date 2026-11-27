@@ -11,7 +11,7 @@ import {
   MIHOMO_MODE_LABELS,
 } from '../constants/ui-constants.js';
 import { copyToClipboard, invokeCmd, openExternal, withButtonLoading } from '../utils/bridge.js';
-import { annotateHost, esc, fmtBytes } from '../utils/format.js';
+import { annotateHost, esc, extractRootDomain, fmtBytes } from '../utils/format.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_VISIBLE_NODES = 24;
@@ -290,7 +290,7 @@ export function renderMihomoConnections(appState) {
     const tag = annotateHost(c.host, c.port);
     const ruleText = c.rulePayload ? `${c.rule},${c.rulePayload}` : (c.rule || '');
     return `
-      <tr>
+      <tr data-conn-id="${esc(c.id)}" data-conn-host="${esc(c.host || '')}">
         <td data-col="process"><strong>${esc(c.process || '系统')}</strong></td>
         <td data-col="host" data-copy="${esc(c.host || '')}" class="mono">${esc(c.host)}:${esc(c.port)} ${tag ? `<span class="pill ${tag.cls} ml-xs">${tag.label}</span>` : ''}</td>
         <td data-col="rule" data-copy="${esc(ruleText)}" class="mono">${esc(c.rule)}${c.rulePayload ? ` (${esc(c.rulePayload)})` : ''}</td>
@@ -429,7 +429,7 @@ export async function loadMihomo(appState) {
   }
 }
 
-export function initMihomoEvents(appState, { reloadConfigUI }) {
+export function initMihomoEvents(appState, { reloadConfigUI, openConfigExporterWithDomain }) {
   loadDiyPrefs();
   applyDiyPrefsToUI();
   updateConnPauseBtn();
@@ -560,6 +560,7 @@ export function initMihomoEvents(appState, { reloadConfigUI }) {
   $('mhRulesTargetFilter')?.addEventListener('change', () => renderMihomoRules(appState));
 
   $('mhCloseAllBtn')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
     const ok = await confirmDialog({
       title: '清理全部本机连接',
       message: '确认断开本机代理内核中所有当前活跃连接？正在传输的页面将自动重连。',
@@ -567,7 +568,7 @@ export function initMihomoEvents(appState, { reloadConfigUI }) {
       danger: true,
     });
     if (!ok) return;
-    await withButtonLoading(ev.currentTarget, async () => {
+    await withButtonLoading(btn, async () => {
       try {
         await invokeCmd('close_mihomo_conn', { id: '__ALL__' });
         showToast('已清理本机全部连接');
@@ -678,17 +679,76 @@ export function initMihomoEvents(appState, { reloadConfigUI }) {
     });
   });
 
-  $('mhConnBody')?.addEventListener('contextmenu', async (ev) => {
-    const td = ev.target.closest('td[data-copy]');
-    if (!td) return;
-    const text = (td.dataset.copy || '').trim();
-    if (!text) return;
+  let ctxMenuPayload = null;
+  const hideConnCtxMenu = () => {
+    const menu = $('mhConnCtxMenu');
+    if (menu) menu.classList.add('hidden');
+    ctxMenuPayload = null;
+  };
+  document.addEventListener('click', (ev) => {
+    const menu = $('mhConnCtxMenu');
+    if (menu && !menu.classList.contains('hidden') && !menu.contains(ev.target)) {
+      hideConnCtxMenu();
+    }
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') hideConnCtxMenu();
+  });
+
+  $('mhConnBody')?.addEventListener('contextmenu', (ev) => {
+    const tr = ev.target.closest('tr[data-conn-id]');
+    if (!tr) return;
     ev.preventDefault();
-    try {
-      await copyToClipboard(text);
-      showToast(`已复制：${text}`);
-    } catch (err) {
-      showToast(err.message, true);
+    const td = ev.target.closest('td[data-copy]');
+    const copyText = (td?.dataset.copy || tr.dataset.connHost || '').trim();
+    const host = (tr.dataset.connHost || '').trim();
+    const rootDomain = extractRootDomain(host);
+    const connId = tr.dataset.connId || '';
+    ctxMenuPayload = { copyText, host, rootDomain, connId };
+
+    const menu = $('mhConnCtxMenu');
+    if (!menu) return;
+    const shortCopy = copyText.length > 26 ? `${copyText.slice(0, 26)}…` : copyText;
+    menu.innerHTML = `
+      ${copyText ? `<button type="button" class="ctx-menu-item" data-ctx="copy">📋 复制：${esc(shortCopy)}</button>` : ''}
+      ${rootDomain ? `<button type="button" class="ctx-menu-item" data-ctx="add-app">➕ 加入 APP 防风控分流 (${esc(rootDomain)})</button>` : ''}
+      ${rootDomain ? `<button type="button" class="ctx-menu-item" data-ctx="add-exit">🛡️ 强制走「落地出口」(${esc(rootDomain)})</button>` : ''}
+      ${connId ? '<button type="button" class="ctx-menu-item danger" data-ctx="kill">🚫 掐断此连接</button>' : ''}
+    `;
+    menu.classList.remove('hidden');
+    const mw = menu.offsetWidth || 240;
+    const mh = menu.offsetHeight || 150;
+    const x = Math.min(ev.clientX, window.innerWidth - mw - 12);
+    const y = Math.min(ev.clientY, window.innerHeight - mh - 12);
+    menu.style.left = `${Math.max(8, x)}px`;
+    menu.style.top = `${Math.max(8, y)}px`;
+  });
+
+  $('mhConnCtxMenu')?.addEventListener('click', async (ev) => {
+    const item = ev.target.closest('[data-ctx]');
+    if (!item || !ctxMenuPayload) return;
+    const payload = ctxMenuPayload;
+    const act = item.dataset.ctx;
+    hideConnCtxMenu();
+    if (act === 'copy' && payload.copyText) {
+      try {
+        await copyToClipboard(payload.copyText);
+        showToast(`已复制：${payload.copyText}`);
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    } else if (act === 'add-app' && payload.rootDomain && openConfigExporterWithDomain) {
+      await openConfigExporterWithDomain(payload.rootDomain, 'app_route');
+    } else if (act === 'add-exit' && payload.rootDomain && openConfigExporterWithDomain) {
+      await openConfigExporterWithDomain(payload.rootDomain, 'custom_exit');
+    } else if (act === 'kill' && payload.connId) {
+      try {
+        await invokeCmd('close_mihomo_conn', { id: payload.connId });
+        showToast('已掐断该本机连接');
+        await loadMihomo(appState);
+      } catch (err) {
+        showToast(err.message, true);
+      }
     }
   });
 }

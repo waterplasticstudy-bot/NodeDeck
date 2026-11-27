@@ -120,8 +120,9 @@ function renderSingboxData(appState, data, scopeMeta) {
             <div class="ios-row"><span class="ios-row-title">ShortID</span><span class="mono">${esc(inb.shortId || '--')}</span></div>
             <div class="ios-row"><span class="ios-row-title">授权用户 (${inb.userCount}人)</span><span>${(inb.users || []).map((u) => `<span class="pill gray ml-xs">${esc(u)}</span>`).join('') || '--'}</span></div>
           ` : isSS ? `
-            <div class="ios-row"><span class="ios-row-title">加密套件</span><span class="mono">${esc(inb.method || '--')}</span></div>
-            <div class="ios-row"><span class="ios-row-title">访问密钥</span><span class="mono">${esc((inb.password || '').slice(0, 10))}••••</span></div>
+            <div class="ios-row"><span class="ios-row-title">加密套件</span><span class="mono">${esc(inb.method || '--')}${String(inb.method || '').startsWith('2022-blake3-') ? ' <span class="pill blue xs ml-xs">支持 EIH 多用户</span>' : ''}</span></div>
+            <div class="ios-row"><span class="ios-row-title">服务端主密钥</span><span class="mono">${esc((inb.password || '').slice(0, 10))}••••</span></div>
+            <div class="ios-row"><span class="ios-row-title">授权用户 (${inb.userCount}人)</span><span>${(inb.users || []).map((u) => `<span class="pill purple ml-xs">${esc(u)}</span>`).join('') || '--'}</span></div>
           ` : isUserPass ? `
             <div class="ios-row"><span class="ios-row-title">使用用户 (${inb.userCount}人)</span><span>${(inb.users || []).map((u) => `<span class="pill blue ml-xs">${esc(u)}</span>`).join('') || '无鉴权'}</span></div>
             <div class="ios-row"><span class="ios-row-title">首个凭证</span><span class="mono">${esc(firstUser.username || '--')} / ${esc((firstUser.password || '').slice(0, 8))}••••</span></div>
@@ -229,8 +230,18 @@ export async function loadSingboxConfig(appState) {
   }
 }
 
-export function initSingboxEvents(appState, { switchTab, reloadOverview, openNatEditor, openConfigExporter }) {
+export function initSingboxEvents(appState, { switchTab, reloadOverview, openNatEditor, openConfigExporter, openTerminalSb }) {
   $('sbOpenExportBtn')?.addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => openConfigExporter(null)));
+  $('sbOpenCliBtn')?.addEventListener('click', () => openTerminalSb());
+  $('sbOpenRemotePanelBtn')?.addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
+    try {
+      const theme = document.documentElement.getAttribute('data-theme') || 'light';
+      const res = await invokeCmd('open_remote_singbox_panel', { nodeId: appState.activeNodeId, theme });
+      showToast(res.message || `已经 SSH 加密回环隧道打开远端 sing-box 面板 (127.0.0.1:${res.localPort})`);
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  }));
   $('natSingboxPane').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-action]');
     if (!btn) return;

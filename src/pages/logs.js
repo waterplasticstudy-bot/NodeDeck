@@ -120,11 +120,12 @@ export async function loadLogs(appState) {
   }
 }
 
-export function initLogsEvents(appState, { reloadOverview, openNatEditor }) {
+export function initLogsEvents(appState, { reloadOverview, openNatEditor, openTerminalShell }) {
   $('logFilter').addEventListener('input', () => renderLogs(appState));
   $('logLines').addEventListener('change', () => loadLogs(appState));
   $('logAutoScroll').addEventListener('change', () => renderLogs(appState));
   $('refreshLogsBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, () => loadLogs(appState)));
+  $('logsOpenPtyBtn')?.addEventListener('click', () => openTerminalShell());
   $('logsIpCheckBtn').addEventListener('click', openIpCheckSheet);
 
   $('logsNatTerminalBtn').addEventListener('click', (ev) => withButtonLoading(ev.currentTarget, async () => {
