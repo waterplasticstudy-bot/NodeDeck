@@ -1,7 +1,7 @@
 [package]
 name = "nodedeck"
-version = "1.2.0"
-description = "NodeDeck — Zero-telemetry, 100% local-only Rust + Tauri v2 desktop workbench for Linux VPS, Alpine NAT, sing-box, Zashboard-style Mihomo DIY control, offline config/QR generation, and isolated multi-account sandboxes"
+version = "1.2.1"
+description = "NodeDeck — Zero-telemetry, 100% local-only Rust + Tauri v2 desktop workbench (Windows & macOS) for Linux VPS, Alpine NAT, sing-box, Zashboard-style Mihomo DIY control, offline config/QR generation, and isolated multi-account sandboxes"
 authors = ["NodeDeck Contributors"]
 license = "MIT"
 edition = "2021"
@@ -26,7 +26,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 base64 = "0.22"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 regex = "1"
 url = "2"
 

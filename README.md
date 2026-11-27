@@ -9,10 +9,10 @@
 
 [简体中文](./README.md) · [English](./README_EN.md) · [🔐 源码 SHA-256 校验清单](./SHA256SUMS-source.txt)
 
-![Version](https://img.shields.io/badge/Version-v1.2.0-007aff)
+![Version](https://img.shields.io/badge/Version-v1.2.1-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
 ![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
-![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6?logo=apple)
 ![Privacy](https://img.shields.io/badge/Telemetry-Zero%20%7C%20100%25%20Local-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -22,7 +22,7 @@
 
 ## ✨ 这是什么？适合谁？
 
-**NodeDeck** 是一款基于 **Rust + Tauri v2 + Windows 原生 WebView2** 打造的开源绿色桌面软件（单文件约 **6 MB**，零 Electron 臃肿、零 Node.js 运行时、零外部 CDN 依赖）。
+**NodeDeck** 是一款基于 **Rust + Tauri v2 + 系统原生 WebView（Windows WebView2 / macOS WKWebView）** 打造的开源轻量桌面软件（Windows 单文件约 **6 MB**，同步提供 **macOS Apple Silicon & Intel `.dmg`**，零 Electron 臃肿、零 Node.js 运行时、零外部 CDN 依赖）。
 
 无论你是刚入门的新手，还是同时维护多台机器的老玩家，**都不需要配齐“全家桶”才能用**：
 
@@ -39,19 +39,19 @@
 > **NodeDeck 没有任何作者后端服务器、云端中转、订阅托管或数据收集接口。**  
 > 你在软件中录入的 IP、密钥、订阅链接、导出的配置与登录态 **100% 仅保存在你自己的电脑本地**，全程完全开源可审计。
 
-### 1. 本机数据落盘清单（全部位于程序同目录）
+### 1. 本机数据落盘清单（Windows 位于程序同目录；macOS `.app` 位于 `~/Library/Application Support/com.nodedeck.desktop/`）
 | 本地路径 | 存了什么 | 隐私保护机制 |
 | :--- | :--- | :--- |
 | `config.json` | 你的节点连接档案、NAT 清单、账号卡片与常用导出方案预设 | 仅存你本机；已在 `.gitignore` 严格忽略；**绝不保存 SSH 密码或网站登录密码** |
 | `exports/` | 你手动点击生成的离线 `.yaml` / `.js` 客户端配置与导出日志 | 纯本机离线拼装并落盘，**零云端 Gist / 零在线托管链接** |
-| `profiles/` | 多账号独立 WebView2 浏览器沙箱 Cookie 目录 | 每个 `profileId` 物理隔离，支持一键彻底清除登录态 |
+| `profiles/` / WKDataStore | 多账号独立浏览器沙箱（Windows WebView2 目录 / macOS 14+ 独立 `WKWebsiteDataStore`） | 每个 `profileId` 物理隔离，支持一键彻底清除登录态 |
 
 ### 2. 完整网络流向公开审计表（随时可抓包核验）
 NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统计数据；程序发出的全部网络请求严格限定为以下几类：
 
 | 功能模块 | 目标地址 | 触发时机 | 说明 |
 | :--- | :--- | :--- | :--- |
-| 主 VPS / NAT 运维 | **你自己的服务器 IP** | 打开节点面板 / 手动点击操作 | 调用 Windows 原生 `ssh.exe` 公钥直连，无任何中间服务器 |
+| 主 VPS / NAT 运维 | **你自己的服务器 IP** | 打开节点面板 / 手动点击操作 | 调用系统原生 OpenSSH 公钥直连，无任何中间服务器 |
 | 本机 Mihomo 控制 | **仅限 `127.0.0.1` / `localhost`** | 停留在 Mihomo 页或手动切换/测速 | 代码级硬限制禁止连接非本机回环地址 |
 | 离线配置导出 / 二维码 / 演示模式 | **无（0 网络请求）** | 随时 | 100% 纯本地离线计算（内置 ISO/IEC 18004 二维码编码器） |
 | 账号独立窗口 / 仪表盘识别 | **你自己填写的官网 URL** | 仅在你主动点击打开/识别时 | 无后台静默轮询；可选「订阅查流」也仅在手动点击时单次拉取 |
@@ -77,7 +77,7 @@ NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统�
 
 ---
 
-## 🚀 核心功能一览（v1.2.0）
+## 🚀 核心功能一览（v1.2.1）
 
 ### 1. 本机 Mihomo / Clash 联动（参考 Zashboard DIY 体验）
 - 兼容 **Bettbox / Clash Verge Rev / FlClash / Mihomo Meta** 等全部本地 Clash API 内核，支持原版 Web UI 随时切换。
@@ -111,31 +111,40 @@ NodeDeck **不会**在后台向任何第三方发送遥测、崩溃报告或统�
 ## 📦 新人 3 分钟上手
 
 ### 方式一：下载 GitHub Actions 官方公开构建版（推荐）
-1. 前往本仓库 [Releases](../../releases) 下载最新 `NodeDeck-windows-x64.exe`（或 `NodeDeck-windows-x64-portable.zip`）与同版本 `SHA256SUMS.txt`。
-2. 核对 SHA-256 哈希值（见下方校验步骤），确认完全一致后直接双击运行（绿色免安装）。
+1. 前往本仓库 [Releases](../../releases) 下载对应系统安装包与同版本 `SHA256SUMS.txt`：
+   - **Windows 10/11 (x64)**：`NodeDeck-windows-x64.exe`（或 `NodeDeck-windows-x64-portable.zip`），绿色免安装；
+   - **macOS Apple Silicon (M1–M4)**：`NodeDeck-macos-arm64.dmg`；
+   - **macOS Intel**：`NodeDeck-macos-x64.dmg`。
+2. 核对 SHA-256 哈希值（见下方校验步骤）。**macOS 首次打开提示**：因本项目为个人免费开源软件未购买 Apple 开发者公证，拖入「应用程序」后若提示无法验证，请在终端执行一次：
+   ```bash
+   xattr -cr /Applications/NodeDeck.app
+   ```
 3. 首次打开推荐操作路径：
    - **想先逛逛**：点左下角 **「🎭 演示模式」**，零配置完整体验；
    - **想管本机代理**：点左侧 **「💻 本机 Mihomo」**，填入本机控制地址（默认 `http://127.0.0.1:9090`）和密钥即可；
    - **想管 VPS / NAT**：点 **「⚙️ 本机与节点配置」** 填 IP 后点 **「🔑 一键配置 SSH 免密向导」**，或在 **「💳 续费与多账号」** 中新增 NAT 与服务商卡片（配置结构可参考 [`config.example.json`](./config.example.json)）。
 
-### 方式二：自己从源码编译（100% 自主掌控）
-前置要求：[Rust Stable](https://rustup.rs/)（含 MSVC）、Node.js 22+（仅用于运行校验脚本）、Windows 10/11 内置 WebView2 与 OpenSSH。
+### 方式二：自己从源码编译（Windows & macOS，100% 自主掌控）
+前置要求：[Rust Stable](https://rustup.rs/)、Node.js 22+（校验脚本与 macOS 打包）；Windows 需内置 WebView2/OpenSSH，macOS 需 Xcode Command Line Tools。
 
-```powershell
+```bash
 # 1. 克隆仓库
 git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
 cd NodeDeck
 
-# 2. 运行全链路自动化质量与隐私门禁（18 项检测）
+# 2. 运行全链路自动化质量与隐私门禁（19 项检测）
 node scripts/verify-all.mjs
 
 # 3. 执行 Rust 单元测试、严格 Clippy 检查与 Release 编译
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+# Windows 生成单文件 .exe：
 cargo build --manifest-path src-tauri/Cargo.toml --release
+# macOS 生成 .app：
+npx --yes @tauri-apps/cli@2 build --bundles app
 ```
 
-编译产物位于 `src-tauri/target/release/NodeDeck.exe`（约 6 MB）。
+Windows 产物位于 `src-tauri/target/release/NodeDeck.exe`（约 6 MB），macOS 产物位于 `src-tauri/target/release/bundle/macos/NodeDeck.app`。
 
 ---
 
@@ -144,9 +153,14 @@ cargo build --manifest-path src-tauri/Cargo.toml --release
 为保证你拿到的程序与仓库公开源码 100% 一致、未被任何中间环节篡改：
 
 1. **二进制安装包校验（以 GitHub Actions 自动产出为准）**：  
-   每次发布 tag 时，GitHub Actions 会在纯净的公开 `windows-latest` 环境从零编译，并自动在 [Releases](../../releases) 正文与附件 **`SHA256SUMS.txt`** 中公布 `NodeDeck-windows-x64.exe` 和 `NodeDeck-windows-x64-portable.zip` 的真实 SHA-256 哈希。下载后在 PowerShell 执行：
+   每次发布 tag 时，GitHub Actions 会在纯净的公开 `windows-latest` 与 `macos-latest` 环境中从零编译，并自动在 [Releases](../../releases) 正文与附件 **`SHA256SUMS.txt`** 中公布全部 Windows 与 macOS 安装包的真实 SHA-256 哈希：
    ```powershell
+   # Windows PowerShell
    Get-FileHash .\NodeDeck-windows-x64.exe -Algorithm SHA256
+   ```
+   ```bash
+   # macOS Terminal
+   shasum -a 256 NodeDeck-macos-arm64.dmg
    ```
    将输出与对应 Release 页面的 `SHA256SUMS.txt` 逐位比对即可。
 

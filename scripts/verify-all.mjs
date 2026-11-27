@@ -605,6 +605,59 @@ check('QR 超出 V16 上限 (>586 字节) 抛出可读中文提示', () => {
   assert.throws(() => qrMod.renderQrSvg('A'.repeat(600)), /超出离线二维码/);
 });
 
+check('仪表盘流量识别脚本精确匹配 A/B 配额、免疫图表小计与内存误抓，并识别只读流量标签', () => {
+  const accRs = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'accounts.rs'), 'utf8');
+  const m = accRs.match(/const DASHBOARD_TRAFFIC_SCRAPE_JS:\s*&str\s*=\s*r#"([\s\S]*?)"#;/);
+  assert.ok(m, '未提取到 DASHBOARD_TRAFFIC_SCRAPE_JS');
+  const scrapeJs = m[1];
+
+  const runScrape = ({ bodyText, elements = [], tabs = [], href = 'https://panel.example.com/instances/1', title = 'Console' }) => {
+    const sandbox = {
+      location: { href },
+      document: {
+        title,
+        body: { innerText: bodyText },
+        querySelectorAll(sel) {
+          if (sel.includes('role="tab"')) return tabs.map((t) => ({ innerText: t, textContent: t }));
+          return elements.map((t) => ({ innerText: t, textContent: t }));
+        },
+      },
+    };
+    return JSON.parse(vm.runInNewContext(scrapeJs, sandbox));
+  };
+
+  // 1) NAT 流量页：存在「已使用 373.59 MB / 100.00 GB」与下方图表干扰项「总计 249.35 MB」
+  const natTraffic = runScrape({
+    bodyText: '本月流量 (11-01 ~ 12-01)\n正常\n已使用\n373.59 MB / 100.00 GB\n0.4%\n每月1号重置流量\n周期流量 (11-01 ~ 12-01)\n总计 249.35 MB',
+    elements: ['已使用\n373.59 MB / 100.00 GB', '总计 249.35 MB'],
+    tabs: ['信息', '网络', '流量', '日志', '配置'],
+  });
+  assert.equal(natTraffic.status, 'ok');
+  assert.equal(natTraffic.usedText, '373.59 MB');
+  assert.equal(natTraffic.totalText, '100.00 GB');
+  assert.equal(natTraffic.percent, 0.4);
+  assert.equal(natTraffic.cycleText, '11-01 ~ 12-01');
+
+  // 2) NAT 信息页：只有「内存 (含页面缓存) 36 MB / 128 MB」，必须拒抓并提示 hasTrafficTab=true
+  const natInfo = runScrape({
+    bodyText: '基本信息\n实例 ID 85\n资源占用\nCPU 15%\n内存 (含页面缓存)\n36 MB / 128 MB (28%)',
+    elements: ['内存 (含页面缓存) 36 MB / 128 MB (28%)'],
+    tabs: ['信息', '网络', '流量', '日志', '配置'],
+  });
+  assert.equal(natInfo.status, 'not_found');
+  assert.equal(natInfo.hasTrafficTab, true);
+
+  // 3) 独立卡片布局（无 A/B 对）：已使用 + 剩余自动推导总额
+  const splitCards = runScrape({
+    bodyText: '实例概览\n已使用 44.3 GB\n剩余流量 2955.7 GB\n到期时间 2026-12-23',
+    elements: ['已使用 44.3 GB', '剩余流量 2955.7 GB', '到期时间 2026-12-23'],
+  });
+  assert.equal(splitCards.status, 'ok');
+  assert.equal(splitCards.usedText, '44.3 GB');
+  assert.equal(splitCards.expiresAt, '2026-12-23');
+  assert.ok(splitCards.totalBytes > 2.9 * 1024 ** 4, '应正确叠加推导 ~3000 GB 总额');
+});
+
 console.log('\n=== [4/4] 开源仓库隐私防泄漏扫描 ===');
 check('privacy-check.mjs 零告警通过', () => {
   const res = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'privacy-check.mjs')], {

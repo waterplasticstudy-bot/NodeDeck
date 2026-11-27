@@ -9,10 +9,10 @@ Manage your **local Mihomo / Clash API (Zashboard-style DIY)**, **Linux VPS & Al
 
 [简体中文](./README.md) · [English](./README_EN.md) · [🔐 Source SHA-256 Checksums](./SHA256SUMS-source.txt)
 
-![Version](https://img.shields.io/badge/Version-v1.2.0-007aff)
+![Version](https://img.shields.io/badge/Version-v1.2.1-007aff)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange?logo=rust)
 ![Size](https://img.shields.io/badge/Portable-~6%20MB-blueviolet)
-![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6?logo=apple)
 ![Privacy](https://img.shields.io/badge/Telemetry-Zero%20%7C%20100%25%20Local-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -22,7 +22,7 @@ Manage your **local Mihomo / Clash API (Zashboard-style DIY)**, **Linux VPS & Al
 
 ## ✨ What Is NodeDeck? (Newcomer-Friendly)
 
-**NodeDeck** is a lightweight open-source Windows desktop workbench built with **Rust + Tauri v2 + native WebView2** (~6 MB portable executable, zero Electron overhead, zero external CDN dependencies).
+**NodeDeck** is a lightweight open-source desktop workbench for **Windows & macOS (Apple Silicon + Intel)** built with **Rust + Tauri v2 + native system WebView** (~6 MB Windows portable executable, native macOS `.dmg`, zero Electron overhead, zero external CDN dependencies).
 
 You do **not** need a complex multi-server setup to get started — use only the modules you need:
 
@@ -45,7 +45,7 @@ You do **not** need a complex multi-server setup to get started — use only the
 - `profiles/`: Isolated WebView2 session directories per `profileId`, clearable in one click.
 
 ### Auditable Network Boundaries (Verify with Any Packet Sniffer)
-1. **Your own VPS / NAT**: Direct key-auth connection via native Windows `ssh.exe` — zero intermediary relays.
+1. **Your own VPS / NAT**: Direct key-auth connection via native system OpenSSH — zero intermediary relays.
 2. **Local Mihomo / Clash API**: Hard-restricted in Rust to `127.0.0.1` / `localhost` loopback only.
 3. **Offline Exporter, QR Generator & Demo Mode**: **0 network requests** (pure local ISO/IEC 18004 QR encoder & template engine).
 4. **Provider Windows & On-Demand Probes**: Opened/fetched only on explicit user clicks — **never background-polled**.
@@ -70,7 +70,7 @@ You do **not** need a complex multi-server setup to get started — use only the
 
 ---
 
-## 🚀 Key Highlights (v1.2.0)
+## 🚀 Key Highlights (v1.2.1)
 
 1. **Zashboard-Style Local Mihomo / Clash DIY Controller**
    - Sort nodes by latency / name / default, hide unavailable/timed-out nodes, switch card density (compact / standard / wide), configure custom test URL & timeout, right-click any node to quick-test delay, or batch-test full groups (RFC 3986 `%20` path-safe for spaces & emojis).
@@ -91,32 +91,48 @@ You do **not** need a complex multi-server setup to get started — use only the
 
 ## 📦 Quick Start & Verification
 
-### Option 1: Portable Release Binary (Built by GitHub Actions)
-Download `NodeDeck-windows-x64.exe` (or `NodeDeck-windows-x64-portable.zip`) and `SHA256SUMS.txt` from [Releases](../../releases), verify the hash, and run directly — no installation required.
+### Option 1: Official GitHub Actions Releases (Windows & macOS)
+Download the release binary and `SHA256SUMS.txt` from [Releases](../../releases):
+- **Windows 10/11 (x64)**: `NodeDeck-windows-x64.exe` or `NodeDeck-windows-x64-portable.zip` (portable, no installer)
+- **macOS Apple Silicon (M1–M4)**: `NodeDeck-macos-arm64.dmg`
+- **macOS Intel**: `NodeDeck-macos-x64.dmg`
 
-### Option 2: Build from Source (Windows 10 / 11)
-Prerequisites: [Rust Stable](https://rustup.rs/) (MSVC), Node.js 22+ (for verification scripts), built-in Windows WebView2 & OpenSSH.
+> **macOS first-launch note**: Because NodeDeck is an unsigned open-source app, after dragging `NodeDeck.app` to `/Applications`, clear the quarantine flag once if macOS prompts:
+> ```bash
+> xattr -cr /Applications/NodeDeck.app
+> ```
 
-```powershell
+### Option 2: Build from Source (Windows & macOS)
+Prerequisites: [Rust Stable](https://rustup.rs/), Node.js 22+, native OpenSSH (plus Xcode CLT on macOS).
+
+```bash
 git clone https://github.com/waterplasticstudy-bot/NodeDeck.git
 cd NodeDeck
 
-# Full 18-point static, sandbox, QR & privacy gate
+# Full 19-point static, sandbox, QR, scraper & privacy gate
 node scripts/verify-all.mjs
 
-# Unit tests, strict clippy & portable release build
+# Unit tests, strict clippy & release build
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+# Windows:
 cargo build --manifest-path src-tauri/Cargo.toml --release
+# macOS (.app bundle):
+npx --yes @tauri-apps/cli@2 build --bundles app
 ```
 
 ---
 
 ## 🔐 Public SHA-256 Verification
 
-- **Release Binaries**: Every GitHub Release automatically publishes **`SHA256SUMS.txt`** generated on GitHub Actions' clean `windows-latest` runner for `NodeDeck-windows-x64.exe` and `NodeDeck-windows-x64-portable.zip`. Verify locally with:
+- **Release Binaries**: Every GitHub Release automatically publishes **`SHA256SUMS.txt`** generated on clean `windows-latest` and `macos-latest` GitHub Actions runners covering all Windows and macOS artifacts:
   ```powershell
+  # Windows
   Get-FileHash .\NodeDeck-windows-x64.exe -Algorithm SHA256
+  ```
+  ```bash
+  # macOS
+  shasum -a 256 NodeDeck-macos-arm64.dmg
   ```
 - **Security-Critical Source Files**: Verified SHA-256 hashes of the remote agents, Rust core modules, offline exporter, QR generator, and verification gates are published in **[`SHA256SUMS-source.txt`](./SHA256SUMS-source.txt)**.
 

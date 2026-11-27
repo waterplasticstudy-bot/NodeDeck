@@ -1,14 +1,20 @@
 //! 本机配置读写、多节点 NAT 档案、多账号与订阅台账（零个人预设，全手动引入）
 
+#[cfg(target_os = "macos")]
+use crate::constants::MAC_APP_DATA_DIR_NAME;
+#[cfg(target_os = "windows")]
+use crate::constants::{WIN_OPENSSH_BIN, WIN_OPENSSH_KEYGEN_BIN};
 use crate::constants::{
     CONFIG_FILE_NAME, DEFAULT_CLASH_API_PORT, DEFAULT_DIALER_PROXY, DEFAULT_HOST, DEFAULT_KEY_PATH,
     DEFAULT_MIHOMO_API_URL, DEFAULT_MONTHLY_QUOTA_GB, DEFAULT_NAT_SINGBOX_CONFIG,
     DEFAULT_SERVER_NAME, DEFAULT_SNI, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DEFAULT_VLESS_FLOW,
-    DEFAULT_VLESS_FP, WIN_OPENSSH_BIN, WIN_OPENSSH_KEYGEN_BIN,
+    DEFAULT_VLESS_FP,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use url::form_urlencoded;
 
@@ -211,7 +217,7 @@ impl Default for AppConfig {
     }
 }
 
-/// 定位配置文件目录：优先可执行文件同目录，开发期向上回溯
+/// 定位配置文件目录：优先可执行文件同目录，开发期向上回溯；macOS .app 只读包自动落盘至 Application Support
 pub fn resolve_panel_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -221,6 +227,17 @@ pub fn resolve_panel_dir() -> PathBuf {
             for ancestor in dir.ancestors().skip(1).take(4) {
                 if ancestor.join(CONFIG_FILE_NAME).exists() {
                     return ancestor.to_path_buf();
+                }
+            }
+            #[cfg(target_os = "macos")]
+            if dir.to_string_lossy().contains(".app/Contents/MacOS") {
+                if let Ok(home) = std::env::var("HOME") {
+                    if !home.trim().is_empty() {
+                        return PathBuf::from(home)
+                            .join("Library")
+                            .join("Application Support")
+                            .join(MAC_APP_DATA_DIR_NAME);
+                    }
                 }
             }
             return dir.to_path_buf();
@@ -276,7 +293,7 @@ where
     save_config_unlocked(&cfg)
 }
 
-/// 解析含 %USERPROFILE% 或 ~ 前缀的私钥路径
+/// 解析含 %USERPROFILE% 或 ~ 前缀的私钥路径（跨 Windows / macOS 自动归一化路径分隔符）
 pub fn resolve_key_path(raw: &str) -> PathBuf {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -297,9 +314,14 @@ pub fn resolve_key_path(raw: &str) -> PathBuf {
             expanded = format!("{home}{}", &expanded[1..]);
         }
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        expanded = expanded.replace('\\', "/");
+    }
     PathBuf::from(expanded)
 }
 
+#[cfg(target_os = "windows")]
 pub fn get_ssh_bin() -> String {
     if Path::new(WIN_OPENSSH_BIN).exists() {
         WIN_OPENSSH_BIN.to_string()
@@ -308,12 +330,23 @@ pub fn get_ssh_bin() -> String {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn get_ssh_bin() -> String {
+    "ssh".to_string()
+}
+
+#[cfg(target_os = "windows")]
 pub fn get_ssh_keygen_bin() -> String {
     if Path::new(WIN_OPENSSH_KEYGEN_BIN).exists() {
         WIN_OPENSSH_KEYGEN_BIN.to_string()
     } else {
         "ssh-keygen".to_string()
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_ssh_keygen_bin() -> String {
+    "ssh-keygen".to_string()
 }
 
 /// 拼接标准 VLESS + Reality 分享链接
@@ -359,5 +392,19 @@ mod tests {
         assert!(parsed.exit_fallback_regions.is_empty());
         assert_eq!(parsed.exit_fallback_mode, "");
         assert!(!parsed.include_all_managed_ips);
+    }
+
+    #[test]
+    fn resolve_key_path_expands_tilde_and_userprofile() {
+        let p1 = resolve_key_path("~/.ssh/id_ed25519");
+        let s1 = p1.to_string_lossy();
+        assert!(!s1.starts_with('~'), "tilde should expand: {s1}");
+        assert!(s1.ends_with("id_ed25519"));
+
+        let p2 = resolve_key_path(r"%USERPROFILE%\.ssh\id_ed25519");
+        let s2 = p2.to_string_lossy();
+        assert!(!s2.to_ascii_lowercase().contains("%userprofile%"));
+        #[cfg(not(target_os = "windows"))]
+        assert!(!s2.contains('\\'), "unix paths should normalize backslashes: {s2}");
     }
 }

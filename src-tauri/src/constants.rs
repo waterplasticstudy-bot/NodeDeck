@@ -14,7 +14,10 @@ pub const DEFAULT_SERVER_NAME: &str = "My Primary VPS";
 pub const DEFAULT_HOST: &str = "";
 pub const DEFAULT_SSH_PORT: u16 = 22;
 pub const DEFAULT_SSH_USER: &str = "root";
+#[cfg(target_os = "windows")]
 pub const DEFAULT_KEY_PATH: &str = "%USERPROFILE%\\.ssh\\id_ed25519";
+#[cfg(not(target_os = "windows"))]
+pub const DEFAULT_KEY_PATH: &str = "~/.ssh/id_ed25519";
 pub const DEFAULT_MONTHLY_QUOTA_GB: u64 = 2000;
 pub const DEFAULT_CLASH_API_PORT: u16 = 19090;
 pub const DEFAULT_MIHOMO_API_URL: &str = "http://127.0.0.1:9090";
@@ -26,9 +29,16 @@ pub const DEFAULT_VLESS_FLOW: &str = "xtls-rprx-vision";
 pub const DEFAULT_VLESS_FP: &str = "chrome";
 
 /// Windows OpenSSH 默认路径与无黑窗子进程标志
+#[cfg(target_os = "windows")]
 pub const WIN_OPENSSH_BIN: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
+#[cfg(target_os = "windows")]
 pub const WIN_OPENSSH_KEYGEN_BIN: &str = r"C:\Windows\System32\OpenSSH\ssh-keygen.exe";
+#[cfg(target_os = "windows")]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// macOS Application Support 数据目录标识（.app 包内部通常只读时自动落盘至此）
+#[cfg(target_os = "macos")]
+pub const MAC_APP_DATA_DIR_NAME: &str = "com.nodedeck.desktop";
 
 /// SSH 长连接超时与保活参数
 pub const SSH_HANDSHAKE_TIMEOUT_MS: u64 = 14_000;

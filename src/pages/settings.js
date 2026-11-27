@@ -73,7 +73,8 @@ export async function loadConfigUI(appState) {
   const { config, keyExists, resolvedKeyPath, panelDir } = await invokeCmd('get_config');
   appState.localConfig = config;
 
-  $('cfgPathHint').textContent = `${panelDir}\\config.json`;
+  const pathSep = panelDir && panelDir.includes('/') && !panelDir.includes('\\') ? '/' : '\\';
+  $('cfgPathHint').textContent = `${panelDir}${pathSep}config.json`;
   $('cfgName').value = config.name || '';
   $('cfgRegion').value = config.region || 'US';
   $('cfgHost').value = config.host || '';

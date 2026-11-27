@@ -1128,7 +1128,22 @@ pub fn open_export_folder(file_path: Option<String>, app: AppHandle) -> Result<(
                             })?;
                         return Ok(());
                     }
-                    #[cfg(not(target_os = "windows"))]
+                    #[cfg(target_os = "macos")]
+                    {
+                        std::process::Command::new("open")
+                            .arg("-R")
+                            .arg(&clean_file)
+                            .spawn()
+                            .map_err(|e| {
+                                SshError::new(
+                                    "OPENER_ERR",
+                                    format!("在访达 (Finder) 中显示文件失败: {e}"),
+                                    None,
+                                )
+                            })?;
+                        return Ok(());
+                    }
+                    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
                     {
                         let _ = clean_file;
                     }

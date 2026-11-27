@@ -1,8 +1,10 @@
 //! 持久加密 SSH 长连接 JSON-RPC 客户端与免密向导
 
 use crate::config::{get_ssh_bin, get_ssh_keygen_bin, load_config, resolve_key_path};
+#[cfg(target_os = "windows")]
+use crate::constants::CREATE_NO_WINDOW;
 use crate::constants::{
-    CREATE_NO_WINDOW, SSHD_PUBKEY_CONF_NAME, SSH_CONNECT_TIMEOUT_SECS, SSH_HANDSHAKE_TIMEOUT_MS,
+    SSHD_PUBKEY_CONF_NAME, SSH_CONNECT_TIMEOUT_SECS, SSH_HANDSHAKE_TIMEOUT_MS,
     SSH_KEY_COMMENT, SSH_SERVER_ALIVE_COUNT_MAX, SSH_SERVER_ALIVE_INTERVAL, SSH_STDERR_MAX_LEN,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -416,24 +418,78 @@ pub fn launch_ssh_key_wizard() -> Result<String, SshError> {
         "set -e && mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && PUBKEY=$(echo '{pub_b64}' | base64 -d) && (grep -qxF \"$PUBKEY\" ~/.ssh/authorized_keys || echo \"$PUBKEY\" >> ~/.ssh/authorized_keys) && if [ \"$(id -u)\" = \"0\" ]; then mkdir -p /etc/ssh/sshd_config.d && printf 'PubkeyAuthentication yes\\n{root_login_line}AuthorizedKeysFile .ssh/authorized_keys\\n' > /etc/ssh/sshd_config.d/{SSHD_PUBKEY_CONF_NAME} && sed -i -E 's/^[[:space:]]*PubkeyAuthentication[[:space:]]+no/#PubkeyAuthentication no/Ig' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true && sshd -t && (systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd); fi && echo '=== SSH_KEY_UPLOAD_SUCCESS ==='"
     );
 
-    let ssh_bin = get_ssh_bin().replace('\'', "''");
-    let ps_script = format!(
-        "$Host.UI.RawUI.WindowTitle = 'NodeDeck SSH 免密配置向导'; \
-         Write-Host '======================================================' -ForegroundColor Cyan; \
-         Write-Host '  正在上传本机公钥至 {user}@{host}:{}' -ForegroundColor Cyan; \
-         Write-Host '  请按提示输入 1 次服务器密码（输入不显示星号，输完回车）' -ForegroundColor Yellow; \
-         Write-Host '======================================================' -ForegroundColor Cyan; \
-         & '{ssh_bin}' -p {} -o StrictHostKeyChecking=accept-new '{user}@{host}' \"{}\"; \
-         Write-Host ''; Read-Host '配置完成！按回车关闭此窗口并回到面板点刷新'",
-        cfg.ssh_port,
-        cfg.ssh_port,
-        remote_cmd.replace('"', "`\"")
-    );
+    #[cfg(target_os = "windows")]
+    {
+        let ssh_bin = get_ssh_bin().replace('\'', "''");
+        let ps_script = format!(
+            "$Host.UI.RawUI.WindowTitle = 'NodeDeck SSH 免密配置向导'; \
+             Write-Host '======================================================' -ForegroundColor Cyan; \
+             Write-Host '  正在上传本机公钥至 {user}@{host}:{}' -ForegroundColor Cyan; \
+             Write-Host '  请按提示输入 1 次服务器密码（输入不显示星号，输完回车）' -ForegroundColor Yellow; \
+             Write-Host '======================================================' -ForegroundColor Cyan; \
+             & '{ssh_bin}' -p {} -o StrictHostKeyChecking=accept-new '{user}@{host}' \"{}\"; \
+             Write-Host ''; Read-Host '配置完成！按回车关闭此窗口并回到面板点刷新'",
+            cfg.ssh_port,
+            cfg.ssh_port,
+            remote_cmd.replace('"', "`\"")
+        );
 
-    std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
-        .spawn()
-        .map_err(|e| SshError::new("LAUNCH_ERR", format!("拉起配置窗口失败: {e}"), None))?;
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
+            .spawn()
+            .map_err(|e| SshError::new("LAUNCH_ERR", format!("拉起配置窗口失败: {e}"), None))?;
 
-    Ok("已弹出 SSH 免密配置终端，按提示输入 1 次密码后回到面板点击「测试免密连接」即可".to_string())
+        Ok("已弹出 SSH 免密配置终端，按提示输入 1 次密码后回到面板点击「测试免密连接」即可".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let sh_escape = |s: &str| s.replace('\'', "'\\''");
+        let ssh_bin = sh_escape(&get_ssh_bin());
+        let target = sh_escape(&format!("{user}@{host}"));
+        let remote_escaped = sh_escape(&remote_cmd);
+        let script_body = format!(
+            "#!/bin/sh\n\
+             clear\n\
+             printf '\\n======================================================\\n'\n\
+             printf '  NodeDeck SSH 免密配置向导\\n'\n\
+             printf '  正在上传本机公钥至 {user}@{host}:{}\\n'\n\
+             printf '  请按提示输入 1 次服务器密码（输入不显示星号，输完回车）\\n'\n\
+             printf '======================================================\\n\\n'\n\
+             '{ssh_bin}' -p {} -o StrictHostKeyChecking=accept-new '{target}' '{remote_escaped}'\n\
+             printf '\\n配置完成！按回车关闭此窗口并回到 NodeDeck 点刷新...'\n\
+             read -r _\n\
+             rm -f \"$0\"\n",
+            cfg.ssh_port, cfg.ssh_port
+        );
+        let wizard_path = key_path
+            .parent()
+            .map(|p| p.join(".nodedeck-ssh-wizard.command"))
+            .unwrap_or_else(|| std::env::temp_dir().join("nodedeck-ssh-wizard.command"));
+        fs::write(&wizard_path, script_body.as_bytes())
+            .map_err(|e| SshError::new("IO_ERROR", format!("写入 macOS 向导脚本失败: {e}"), None))?;
+        fs::set_permissions(&wizard_path, fs::Permissions::from_mode(0o700))
+            .map_err(|e| SshError::new("IO_ERROR", format!("设置向导脚本权限失败: {e}"), None))?;
+        std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(&wizard_path)
+            .spawn()
+            .map_err(|e| SshError::new("LAUNCH_ERR", format!("拉起 macOS 终端失败: {e}"), None))?;
+
+        Ok("已打开 macOS 终端，按提示输入 1 次密码后回到面板点击「测试免密连接」即可".to_string())
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let _ = remote_cmd;
+        Err(SshError::new(
+            "UNSUPPORTED_OS",
+            format!(
+                "当前系统请手动在终端执行一次：ssh-copy-id -i \"{pub_path}\" -p {} {user}@{host}",
+                cfg.ssh_port
+            ),
+            None,
+        ))
+    }
 }

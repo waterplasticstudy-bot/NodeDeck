@@ -1,9 +1,11 @@
 //! Alpine NAT SSH 传输层与基础运维采集（总览、日志、校验/重启/端口、备份恢复）
 
 use crate::config::{get_ssh_bin, resolve_key_path, NatNodeConfig};
+#[cfg(target_os = "windows")]
+use crate::constants::CREATE_NO_WINDOW;
 use crate::constants::{
-    ALPINE_CONFIG_PATH_PATTERN, ALPINE_SSH_TIMEOUT_MS, CREATE_NO_WINDOW,
-    DEFAULT_NAT_SINGBOX_CONFIG, NAT_BACKUP_NAME_PATTERN, SSH_CONNECT_TIMEOUT_SECS,
+    ALPINE_CONFIG_PATH_PATTERN, ALPINE_SSH_TIMEOUT_MS, DEFAULT_NAT_SINGBOX_CONFIG,
+    NAT_BACKUP_NAME_PATTERN, SSH_CONNECT_TIMEOUT_SECS,
 };
 use crate::ssh_client::SshError;
 use regex::Regex;

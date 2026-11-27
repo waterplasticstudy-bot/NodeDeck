@@ -80,6 +80,15 @@ fn unix_to_ymd(unix_sec: u64) -> String {
     format!("{year:04}-{m:02}-{d:02}")
 }
 
+#[cfg(target_os = "macos")]
+fn data_store_id_for(safe_id: &str) -> [u8; 16] {
+    uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_URL,
+        format!("nodedeck://profile/{safe_id}").as_bytes(),
+    )
+    .into_bytes()
+}
+
 pub fn profile_dir_for(app: &AppHandle, profile_id: &str) -> Result<PathBuf, SshError> {
     let safe_id = validate_profile_id(profile_id)?;
     let base = app
@@ -131,8 +140,17 @@ pub async fn open_isolated_window(
         .title(title)
         .inner_size(ACCOUNT_WINDOW_WIDTH, ACCOUNT_WINDOW_HEIGHT)
         .center()
-        .resizable(true)
-        .data_directory(profile_dir.clone());
+        .resizable(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = fs::write(profile_dir.join(".session-active"), b"1");
+        builder = builder.data_store_identifier(data_store_id_for(&safe_id));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.data_directory(profile_dir.clone());
+    }
 
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone()).map_err(|e| {
@@ -161,6 +179,11 @@ pub async fn clear_isolated_session(app: &AppHandle, profile_id: &str) -> Result
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.close();
         tokio::time::sleep(Duration::from_millis(SESSION_CLOSE_SETTLE_MS)).await;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.remove_data_store(data_store_id_for(&safe_id)).await;
     }
 
     if profile_dir.exists() {
@@ -203,30 +226,103 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
       if (parts.length !== 3) return '';
       return parts[0] + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0');
     }
+    function validQuotaRatio(ub, tb) {
+      if (tb < 104857600) return false;
+      if (tb >= ub) return true;
+      return tb >= 1073741824 && ub <= tb * 1.15;
+    }
+    function hasTrafficTabButton() {
+      if (typeof document === 'undefined' || !document.querySelectorAll) return false;
+      var btns = document.querySelectorAll('button, a, [role="tab"]');
+      for (var i = 0; i < btns.length; i++) {
+        var label = (btns[i].innerText || btns[i].textContent || '').trim();
+        if (/^(流量|流量统计|流量详情|Traffic)$/i.test(label)) return true;
+      }
+      return false;
+    }
 
     var usedBytes = 0, totalBytes = 0, remBytes = 0;
     var usedText = '', totalText = '', remText = '';
     var expiresAt = '';
+    var matchedPair = false;
 
     var sizeRe = /(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i;
+    var hwNoiseRe = /(内存|记忆体|RAM|Swap|交换|硬盘|磁盘|存储|Disk|Storage|缓存|Cache|CPU|核心|负载|Load|进程|带宽上限|峰值带宽|Mbps|Gbps)/i;
+    var dirNoiseRe = /(入站|出站|上行|下行|上传|下载|Upload|Download|Inbound|Outbound|单日|日峰值|最高|峰值|Peak)/i;
+    var trafficCueRe = /(本月流量|流量统计|流量使用|流量配额|套餐流量|总流量|剩余流量|已用流量|已使用|已用|流量|Traffic|Usage|Quota|Data|Plan)/i;
 
+    // 1) 优先识别明确的「已用 / 总配额」配对（按上下文与量级评分，排除内存/磁盘/入出站等非流量对）
+    var pairRe = /(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*\/\s*(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)/gi;
+    var bestPair = null;
+    var pm;
+    while ((pm = pairRe.exec(txt)) !== null) {
+      var ub = toBytes(pm[1], pm[2]);
+      var tb = toBytes(pm[3], pm[4]);
+      if (!validQuotaRatio(ub, tb)) continue;
+
+      var startIdx = pm.index;
+      var beforeChunk = txt.slice(Math.max(0, startIdx - 72), startIdx);
+      var lineStart = txt.lastIndexOf('\n', startIdx - 1);
+      var prevLineStart = lineStart > 0 ? txt.lastIndexOf('\n', lineStart - 1) : -1;
+      var lineEnd = txt.indexOf('\n', startIdx + pm[0].length);
+      var localLine = txt.slice(lineStart + 1, lineEnd === -1 ? txt.length : lineEnd);
+      var nearCtx = txt.slice(prevLineStart + 1, lineEnd === -1 ? txt.length : lineEnd);
+
+      if (hwNoiseRe.test(localLine) || hwNoiseRe.test(beforeChunk.slice(-36))) continue;
+      if (/(入站\s*\/\s*出站|出站\s*\/\s*入站|上行\s*\/\s*下行|上传\s*\/\s*下载|Up\s*\/\s*Down|Rx\s*\/\s*Tx)/i.test(nearCtx)) continue;
+
+      var score = 0;
+      if (trafficCueRe.test(nearCtx) || trafficCueRe.test(beforeChunk)) score += 50;
+      if (tb >= 1073741824) score += 30;
+      if (tb >= 10737418240) score += 15;
+      if (tb >= ub) score += 20;
+      else score -= 35;
+      if (dirNoiseRe.test(localLine) && !trafficCueRe.test(localLine)) score -= 25;
+
+      if (!bestPair || score > bestPair.score) {
+        bestPair = {
+          score: score,
+          ub: ub,
+          tb: tb,
+          usedText: pm[1].replace(/,/g, '') + ' ' + pm[2].toUpperCase(),
+          totalText: pm[3].replace(/,/g, '') + ' ' + pm[4].toUpperCase()
+        };
+      }
+    }
+    if (bestPair && bestPair.score >= 20) {
+      usedBytes = bestPair.ub;
+      totalBytes = bestPair.tb;
+      usedText = bestPair.usedText;
+      totalText = bestPair.totalText;
+      matchedPair = true;
+    }
+
+    // 2) DOM 细粒度扫描：始终提取到期日期；仅在未命中明确配对时提取独立已用/剩余/总量卡片
     if (typeof document !== 'undefined' && document.querySelectorAll) {
       var els = document.querySelectorAll('div, section, li, td, article, p');
-      var bestUsedLen = 999, bestRemLen = 999, bestTotalLen = 999, bestExpLen = 999;
+      var bestUsedLen = 999, bestRemLen = 999, bestTotalScore = -1, bestTotalLen = 999, bestExpLen = 999;
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
         var t = (el.innerText || '').trim();
         if (!t || t.length > 72) continue;
-        var sm = t.match(sizeRe);
-        if (sm) {
-          var b = toBytes(sm[1], sm[2]);
-          var cleanTxt = sm[1].replace(/,/g, '') + ' ' + sm[2].toUpperCase();
-          if (/(已使用|已用流量|已用|已消耗|Used)/i.test(t) && !/(剩余|总流量|套餐流量|总额度)/.test(t)) {
-            if (t.length < bestUsedLen) { bestUsedLen = t.length; usedBytes = b; usedText = cleanTxt; }
-          } else if (/(剩余流量|可用流量|剩余|Remaining)/i.test(t) && !/(已用|总流量|套餐流量)/.test(t)) {
-            if (t.length < bestRemLen) { bestRemLen = t.length; remBytes = b; remText = cleanTxt; }
-          } else if (/(总流量|套餐流量|总额度|总计|流量配额|Total)/i.test(t) && !/(已用|剩余)/.test(t)) {
-            if (t.length < bestTotalLen && b >= 104857600) { bestTotalLen = t.length; totalBytes = b; totalText = cleanTxt; }
+        if (!matchedPair && !hwNoiseRe.test(t) && !dirNoiseRe.test(t)) {
+          var sm = t.match(sizeRe);
+          if (sm) {
+            var b = toBytes(sm[1], sm[2]);
+            var cleanTxt = sm[1].replace(/,/g, '') + ' ' + sm[2].toUpperCase();
+            if (/(已使用|已用流量|已用|已消耗|Used)/i.test(t) && !/(剩余|总流量|套餐流量|总额度|流量配额)/.test(t)) {
+              if (t.length < bestUsedLen) { bestUsedLen = t.length; usedBytes = b; usedText = cleanTxt; }
+            } else if (/(剩余流量|可用流量|剩余|Remaining)/i.test(t) && !/(已用|总流量|套餐流量|总额度)/.test(t)) {
+              if (t.length < bestRemLen) { bestRemLen = t.length; remBytes = b; remText = cleanTxt; }
+            } else if (/(总流量|套餐流量|总额度|流量配额|月流量)/i.test(t) && !/(已用|剩余)/.test(t)) {
+              if (b >= 104857600 && (2 > bestTotalScore || (2 === bestTotalScore && t.length < bestTotalLen))) {
+                bestTotalScore = 2; bestTotalLen = t.length; totalBytes = b; totalText = cleanTxt;
+              }
+            } else if (/(总计|Total)/i.test(t) && !/(已用|剩余)/.test(t)) {
+              if (b >= 1073741824 && (1 > bestTotalScore || (1 === bestTotalScore && t.length < bestTotalLen))) {
+                bestTotalScore = 1; bestTotalLen = t.length; totalBytes = b; totalText = cleanTxt;
+              }
+            }
           }
         }
         if (/(到期时间|到期日期|过期时间|有效期至|Expires?)/i.test(t)) {
@@ -234,72 +330,77 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
           if (dm && t.length < bestExpLen) { bestExpLen = t.length; expiresAt = normDate(dm[1]); }
         }
       }
+      if (!matchedPair && totalBytes > 0 && usedBytes > 0 && !validQuotaRatio(usedBytes, totalBytes)) {
+        totalBytes = 0; totalText = '';
+      }
     }
 
-    if (!totalBytes) {
-      var pairRe = /(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*\/\s*(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)/gi;
-      var pm;
-      while ((pm = pairRe.exec(txt)) !== null) {
-        var ub = toBytes(pm[1], pm[2]);
-        var tb = toBytes(pm[3], pm[4]);
-        if (tb >= 104857600 && tb >= ub * 0.5) {
-          usedBytes = ub; totalBytes = tb;
-          usedText = pm[1].replace(/,/g, '') + ' ' + pm[2].toUpperCase();
-          totalText = pm[3].replace(/,/g, '') + ' ' + pm[4].toUpperCase();
-          break;
+    // 3) 纯文本兜底（仅在未命中明确配对时启用）
+    if (!matchedPair) {
+      if (!usedBytes) {
+        var u1 = txt.match(/(?:已使用|已用流量|已用|已消耗|Used)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
+          || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:已使用|已用流量|已用|Used)/i);
+        if (u1) { usedBytes = toBytes(u1[1], u1[2]); usedText = u1[1].replace(/,/g, '') + ' ' + u1[2].toUpperCase(); }
+      }
+      if (!remBytes) {
+        var r1 = txt.match(/(?:剩余流量|可用流量|剩余|Remaining)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
+          || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:剩余流量|可用流量|Remaining)/i);
+        if (r1) { remBytes = toBytes(r1[1], r1[2]); remText = r1[1].replace(/,/g, '') + ' ' + r1[2].toUpperCase(); }
+      }
+      if (!totalBytes) {
+        var t1 = txt.match(/(?:总流量|套餐流量|总额度|流量配额|月流量)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
+          || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:总流量|套餐流量|总额度|流量配额)/i);
+        if (t1) {
+          var candT = toBytes(t1[1], t1[2]);
+          if (validQuotaRatio(usedBytes, candT)) {
+            totalBytes = candT; totalText = t1[1].replace(/,/g, '') + ' ' + t1[2].toUpperCase();
+          }
         }
       }
-    }
 
-    if (!usedBytes) {
-      var u1 = txt.match(/(?:已使用|已用流量|已用|已消耗|Used)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
-        || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:已使用|已用流量|已用|Used)/i);
-      if (u1) { usedBytes = toBytes(u1[1], u1[2]); usedText = u1[1].replace(/,/g, '') + ' ' + u1[2].toUpperCase(); }
-    }
-    if (!remBytes) {
-      var r1 = txt.match(/(?:剩余流量|可用流量|剩余|Remaining)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
-        || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:剩余流量|可用流量|Remaining)/i);
-      if (r1) { remBytes = toBytes(r1[1], r1[2]); remText = r1[1].replace(/,/g, '') + ' ' + r1[2].toUpperCase(); }
-    }
-    if (!totalBytes) {
-      var t1 = txt.match(/(?:总流量|套餐流量|总额度|总计|流量配额|Total)[\s:：]{0,12}(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\b/i)
-        || txt.match(/(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|B)\s*[\r\n\s]{1,6}(?:总流量|套餐流量|总额度|Total)/i);
-      if (t1) { totalBytes = toBytes(t1[1], t1[2]); totalText = t1[1].replace(/,/g, '') + ' ' + t1[2].toUpperCase(); }
-    }
-
-    if (!totalBytes && remBytes > 0) {
-      var allSizeRe = /(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|TB|GB|MB)\b/gi;
-      var bestCand = 0, bestCandTxt = '';
-      var am;
-      while ((am = allSizeRe.exec(txt)) !== null) {
-        var cb = toBytes(am[1], am[2]);
-        if (cb >= remBytes && cb > remBytes * 1.0001 && (bestCand === 0 || cb < bestCand)) {
-          bestCand = cb;
-          bestCandTxt = am[1].replace(/,/g, '') + ' ' + am[2].toUpperCase();
+      if (!totalBytes && remBytes > 0) {
+        var allSizeRe = /(\d[\d,]*(?:\.\d+)?)\s*(TiB|GiB|MiB|TB|GB|MB)\b/gi;
+        var bestCand = 0, bestCandTxt = '';
+        var am;
+        while ((am = allSizeRe.exec(txt)) !== null) {
+          var cb = toBytes(am[1], am[2]);
+          if (cb >= remBytes && cb > remBytes * 1.0001 && (bestCand === 0 || cb < bestCand)) {
+            bestCand = cb;
+            bestCandTxt = am[1].replace(/,/g, '') + ' ' + am[2].toUpperCase();
+          }
+        }
+        if (bestCand > 0) {
+          totalBytes = bestCand;
+          totalText = bestCandTxt;
         }
       }
-      if (bestCand > 0) {
-        totalBytes = bestCand;
-        totalText = bestCandTxt;
-      }
-    }
 
-    if (totalBytes > 0 && !usedBytes && remBytes > 0 && totalBytes >= remBytes) {
-      usedBytes = Math.max(0, totalBytes - remBytes);
-      usedText = fmtSize(usedBytes);
-    } else if (!totalBytes && usedBytes > 0 && remBytes > 0) {
-      totalBytes = usedBytes + remBytes;
-      totalText = fmtSize(totalBytes);
-    } else if (!totalBytes && remBytes > 0) {
-      totalBytes = remBytes;
-      totalText = remText;
-      usedBytes = 0;
-      usedText = '0 B';
+      if (totalBytes > 0 && !usedBytes && remBytes > 0 && totalBytes >= remBytes) {
+        usedBytes = Math.max(0, totalBytes - remBytes);
+        usedText = fmtSize(usedBytes);
+      } else if (!totalBytes && usedBytes > 0 && remBytes > 0) {
+        totalBytes = usedBytes + remBytes;
+        totalText = fmtSize(totalBytes);
+      } else if (!totalBytes && remBytes > 0) {
+        totalBytes = remBytes;
+        totalText = remText;
+        usedBytes = 0;
+        usedText = '0 B';
+      }
+
+      if (totalBytes > 0 && usedBytes > 0 && !validQuotaRatio(usedBytes, totalBytes)) {
+        totalBytes = 0; totalText = '';
+      }
     }
 
     if (!totalBytes) {
       var looksLogin = /\/login|sign\s*in|立即登录|账号登录|just a moment|verify you are human|人机验证/i.test(txt + ' ' + href + ' ' + title);
-      return JSON.stringify({ status: looksLogin ? 'need_login' : 'not_found', href: href, title: title });
+      return JSON.stringify({
+        status: looksLogin ? 'need_login' : 'not_found',
+        hasTrafficTab: !looksLogin && hasTrafficTabButton(),
+        href: href,
+        title: title
+      });
     }
 
     if (!expiresAt) {
@@ -328,32 +429,30 @@ const DASHBOARD_TRAFFIC_SCRAPE_JS: &str = r#"(function(){
   }
 })()"#;
 
+/// 当详情页默认停在「信息」等非流量标签时，仅精确点击只读「流量」标签（绝不误触任何操作按钮）
+const AUTO_SWITCH_TRAFFIC_TAB_JS: &str = r#"(function(){
+  try {
+    var btns = document.querySelectorAll('button, a, [role="tab"]');
+    for (var i = 0; i < btns.length; i++) {
+      var el = btns[i];
+      var label = (el.innerText || el.textContent || '').trim();
+      if (/^(流量|流量统计|流量详情|Traffic)$/i.test(label)) {
+        el.click();
+        return 'clicked';
+      }
+    }
+    return 'none';
+  } catch (e) {
+    return 'err';
+  }
+})()"#;
+
 pub enum ScrapeOutcome {
     NeedsWindowReady(String),
     Captured(TrafficSnapshot),
 }
 
-pub async fn scrape_window_traffic(
-    app: &AppHandle,
-    profile_id: &str,
-    title: &str,
-    url_str: &str,
-) -> Result<ScrapeOutcome, SshError> {
-    let safe_id = validate_profile_id(profile_id)?;
-    let label = format!("{ACCOUNT_WINDOW_PREFIX}{safe_id}");
-
-    let Some(win) = app.get_webview_window(&label) else {
-        if !url_str.trim().is_empty() {
-            open_isolated_window(app, &safe_id, title, url_str).await?;
-        }
-        return Ok(ScrapeOutcome::NeedsWindowReady(
-            "已为你打开独立仪表盘窗口，请确认已登录并停留在显示流量的页面，再点一次「识别流量」".to_string(),
-        ));
-    };
-
-    let _ = win.show();
-    let _ = win.unminimize();
-
+async fn eval_scrape_once(win: &tauri::WebviewWindow) -> Result<Value, SshError> {
     let (tx, rx) = oneshot::channel::<String>();
     let tx_slot = Arc::new(StdMutex::new(Some(tx)));
     let tx_clone = Arc::clone(&tx_slot);
@@ -383,6 +482,45 @@ pub async fn scrape_window_traffic(
         Ok(v) => v,
         Err(_) => Value::Null,
     };
+    Ok(parsed)
+}
+
+pub async fn scrape_window_traffic(
+    app: &AppHandle,
+    profile_id: &str,
+    title: &str,
+    url_str: &str,
+) -> Result<ScrapeOutcome, SshError> {
+    let safe_id = validate_profile_id(profile_id)?;
+    let label = format!("{ACCOUNT_WINDOW_PREFIX}{safe_id}");
+
+    let Some(win) = app.get_webview_window(&label) else {
+        if !url_str.trim().is_empty() {
+            open_isolated_window(app, &safe_id, title, url_str).await?;
+        }
+        return Ok(ScrapeOutcome::NeedsWindowReady(
+            "已为你打开独立仪表盘窗口，请确认已登录并停留在显示流量的页面，再点一次「识别流量」".to_string(),
+        ));
+    };
+
+    let _ = win.show();
+    let _ = win.unminimize();
+
+    let mut parsed = eval_scrape_once(&win).await?;
+
+    // 若当前停留在实例「信息」等标签页且页面存在只读「流量」标签，自动切换并等待渲染后重抓
+    if parsed.get("status").and_then(Value::as_str) == Some("not_found")
+        && parsed.get("hasTrafficTab").and_then(Value::as_bool) == Some(true)
+    {
+        let _ = win.eval(AUTO_SWITCH_TRAFFIC_TAB_JS);
+        for wait_ms in [900u64, 1100u64] {
+            tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+            parsed = eval_scrape_once(&win).await?;
+            if parsed.get("status").and_then(Value::as_str) == Some("ok") {
+                break;
+            }
+        }
+    }
 
     let status = parsed.get("status").and_then(Value::as_str).unwrap_or("error");
     match status {

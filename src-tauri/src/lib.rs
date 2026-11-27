@@ -97,10 +97,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building NodeDeck desktop application");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        RunEvent::Exit => {
             let state = app_handle.state::<AppState>();
             tauri::async_runtime::block_on(state.ssh.reset());
         }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } => {
+            if !has_visible_windows {
+                show_main_window(app_handle);
+            }
+        }
+        _ => {}
     });
 }
